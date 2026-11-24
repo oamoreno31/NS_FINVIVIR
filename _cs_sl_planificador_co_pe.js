@@ -24,6 +24,46 @@ define([
     url
 ) => {
 
+    /**
+     * Registra en el log de ejecución el error capturado por una función.
+     * Cada objeto de error se registra una sola vez aunque se relance
+     * por varias funciones anidadas. Nunca lanza excepciones propias.
+     */
+    const LOGGED_ERRORS = typeof WeakSet === 'function' ? new WeakSet() : null;
+
+    const logFunctionError = (functionName, functionError) => {
+        try {
+            if (functionError !== null && typeof functionError === 'object' && LOGGED_ERRORS) {
+                if (LOGGED_ERRORS.has(functionError)) return;
+                LOGGED_ERRORS.add(functionError);
+            }
+
+            let serialized;
+            try {
+                serialized = JSON.stringify(functionError);
+            } catch (serializeError) {
+                serialized = String(functionError);
+            }
+
+            log.error({
+                title: `Error en ${functionName}`,
+                details: {
+                    name: functionError && functionError.name,
+                    message: functionError && functionError.message,
+                    stack: functionError && functionError.stack,
+                    error: serialized
+                }
+            });
+        } catch (logError) {
+            try {
+                log.error({ title: `Error en ${functionName}`, details: String(functionError) });
+            } catch (ignore) {
+                // El registro de errores nunca debe interrumpir la ejecución.
+            }
+        }
+    };
+
+
     const CONFIG = {
         FILE_FOLDER_ID: 1836,
 
@@ -76,6 +116,15 @@ define([
             RATE: 'custrecord_cs_tax_rate'
         },
 
+        ITEM_PARAMETERS: {
+            RECORD: 'customrecord_fvr_parametrizacion_articul',
+            PARENT_ITEM: 'custrecord_fvr_art_padre',
+            CHILD_ITEM: 'custrecord_fvr_art_hijo',
+            CURRENCY: 'custrecord_fvr_moneda',
+            MIN_AMOUNT: 'custrecord_fvr_monto_minimo',
+            MAX_AMOUNT: 'custrecord_fvr_monto_maximo'
+        },
+
         FIELDS: {
             TAX_RATE: 'custrecord_fi_tasa_o_cuota',
             TAX_PERCENT: 'custrecord_cs_porcentaje_impuesto',
@@ -101,6 +150,7 @@ define([
 
             EXPENSE_CATEGORY_ACCOUNT: 'custrecord_cs_cuenta_pasivo_plani',
             EXPENSE_CATEGORY_AVAILABLE: 'custrecord_fact_planificador',
+            ITEM_SHOW_IN_PLANNER: 'custitem_fi_uni_mostrar_planificador',
             BRAND_SEGMENT_SOURCE: 'cseg_marca'
         }
     };
@@ -110,62 +160,98 @@ define([
     // -------------------------------------------------------------------------
 
     const toNumber = value => {
-        const number = Number(String(value || '0').replace(/,/g, ''));
-        return Number.isFinite(number) ? number : 0;
+        try {
+            const number = Number(String(value || '0').replace(/,/g, ''));
+            return Number.isFinite(number) ? number : 0;
+        } catch (functionError) {
+            logFunctionError('toNumber', functionError);
+            throw functionError;
+        }
     };
 
-    const cleanText = value => String(value || '').trim();
+    const cleanText = value => {
+        try {
+            return String(value || '').trim();
+        } catch (functionError) {
+            logFunctionError('cleanText', functionError);
+            throw functionError;
+        }
+    };
 
     const normalizeIssueDate = value => {
+        try {
 
-        const text =
-            cleanText(value);
+            const text =
+                cleanText(value);
 
-        if (!text) {
+            if (!text) {
+                return '';
+            }
+
+            /*
+             * Admite:
+             *
+             * 2026-08-03
+             * 2026-08-03T11:38:00
+             * 2026-08-03T11:38:00-06:00
+             */
+            const isoMatch =
+                text.match(
+                    /^(\d{4})-(\d{2})-(\d{2})/
+                );
+
+            if (isoMatch) {
+                return (
+                    `${isoMatch[1]}-` +
+                    `${isoMatch[2]}-` +
+                    `${isoMatch[3]}`
+                );
+            }
+
             return '';
+        } catch (functionError) {
+            logFunctionError('normalizeIssueDate', functionError);
+            throw functionError;
         }
-
-        /*
-         * Admite:
-         *
-         * 2026-08-03
-         * 2026-08-03T11:38:00
-         * 2026-08-03T11:38:00-06:00
-         */
-        const isoMatch =
-            text.match(
-                /^(\d{4})-(\d{2})-(\d{2})/
-            );
-
-        if (isoMatch) {
-            return (
-                `${isoMatch[1]}-` +
-                `${isoMatch[2]}-` +
-                `${isoMatch[3]}`
-            );
-        }
-
-        return '';
     };
 
-    const normalizeTaxId = value => cleanText(value)
-        .toUpperCase()
-        .replace(/[\s.\-]/g, '');
+    const normalizeTaxId = value => {
+        try {
+            return cleanText(value)
+                .toUpperCase()
+                .replace(/[\s.\-]/g, '');
+        } catch (functionError) {
+            logFunctionError('normalizeTaxId', functionError);
+            throw functionError;
+        }
+    };
 
-    const escapeHtml = value => String(value ?? '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#039;');
+    const escapeHtml = value => {
+        try {
+            return String(value ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        } catch (functionError) {
+            logFunctionError('escapeHtml', functionError);
+            throw functionError;
+        }
+    };
 
     const getAttributeAny = (node, names) => {
-        if (!node) return '';
-        for (const name of names) {
-            const value = node.getAttribute({ name }) || node.getAttribute(name);
-            if (value !== null && value !== undefined && value !== '') return value;
+        try {
+            if (!node) return '';
+            for (const name of names) {
+                const value = node.getAttribute({ name }) || node.getAttribute(name);
+                if (value !== null && value !== undefined && value !== '') return value;
+            }
+            return '';
+        } catch (functionError) {
+            logFunctionError('getAttributeAny', functionError);
+            throw functionError;
         }
-        return '';
     };
 
     const selectNodes = (document, xpath, namespaces = {}) => {
@@ -177,46 +263,79 @@ define([
         }
     };
 
-    const selectFirst = (document, xpath, namespaces = {}) =>
-        selectNodes(document, xpath, namespaces)[0] || null;
+    const selectFirst = (document, xpath, namespaces = {}) => {
+        try {
+            return selectNodes(document, xpath, namespaces)[0] || null;
+        } catch (functionError) {
+            logFunctionError('selectFirst', functionError);
+            throw functionError;
+        }
+    };
 
-    const nodeText = node => cleanText(node?.textContent || node?.text || '');
+    const nodeText = node => {
+        try {
+            return cleanText(node?.textContent || node?.text || '');
+        } catch (functionError) {
+            logFunctionError('nodeText', functionError);
+            throw functionError;
+        }
+    };
 
     const firstText = (document, xpaths, namespaces = {}) => {
-        for (const xpath of xpaths) {
-            const value = nodeText(selectFirst(document, xpath, namespaces));
-            if (value) return value;
+        try {
+            for (const xpath of xpaths) {
+                const value = nodeText(selectFirst(document, xpath, namespaces));
+                if (value) return value;
+            }
+            return '';
+        } catch (functionError) {
+            logFunctionError('firstText', functionError);
+            throw functionError;
         }
-        return '';
     };
 
     const addHiddenField = (form, id, value, type = serverWidget.FieldType.TEXT) => {
-        const field = form.addField({ id, type, label: id });
-        field.defaultValue = value === null || value === undefined ? '' : String(value);
-        field.updateDisplayType({ displayType: serverWidget.FieldDisplayType.HIDDEN });
-        return field;
+        try {
+            const field = form.addField({ id, type, label: id });
+            field.defaultValue = value === null || value === undefined ? '' : String(value);
+            field.updateDisplayType({ displayType: serverWidget.FieldDisplayType.HIDDEN });
+            return field;
+        } catch (functionError) {
+            logFunctionError('addHiddenField', functionError);
+            throw functionError;
+        }
     };
 
     const getNextWednesday = () => {
-        const today = new Date();
-        let days = (3 - today.getDay() + 7) % 7;
+        try {
+            const today = new Date();
+            let days = (3 - today.getDay() + 7) % 7;
 
-        // Si hoy es miércoles, toma el miércoles de la siguiente semana
-        if (days === 0) days = 7;
+            // Si hoy es miércoles, toma el miércoles de la siguiente semana
+            if (days === 0) days = 7;
 
-        const result = new Date(today);
-        result.setDate(today.getDate() + days);
+            const result = new Date(today);
+            result.setDate(today.getDate() + days);
 
-        return result;
+            return result;
+        } catch (functionError) {
+            logFunctionError('getNextWednesday', functionError);
+            throw functionError;
+        }
     };
 
     const getNextThursday = () => {
-        const today = new Date();
-        let days = (4 - today.getDay() + 7) % 7;
-        if (days === 0) days = 7;
-        const result = new Date(today);
-        result.setDate(today.getDate() + days);
-        return result;
+        try {
+            const today = new Date();
+            let days = (4 - today.getDay() + 7) % 7;
+            if (days === 0) days = 7;
+            const result = new Date(today);
+            result.setDate(today.getDate() + days);
+            return result;
+        } catch (functionError) {
+            logFunctionError('getNextThursday', functionError);
+            throw functionError;
+        }
     };
 
     const parseNetSuiteDate = value => {
@@ -315,101 +434,106 @@ define([
      * Se usa para asignar la cuenta CxP del encabezado de la Vendor Bill.
      */
     const findAccountByNumber = accountNumber => {
+        try {
 
-        const normalized =
-            cleanText(accountNumber);
+            const normalized =
+                cleanText(accountNumber);
 
-        if (!normalized) {
-            return '';
-        }
+            if (!normalized) {
+                return '';
+            }
 
-        const results =
-            search.create({
-                type: 'account',
-                filters: [
-                    ['number', 'is', normalized],
-                    'AND',
-                    ['isinactive', 'is', 'F']
-                ],
-                columns: [
-                    search.createColumn({
-                        name: 'internalid'
-                    }),
-                    search.createColumn({
-                        name: 'number'
-                    }),
-                    search.createColumn({
-                        name: 'name'
-                    })
-                ]
-            })
-                .run()
-                .getRange({
-                    start: 0,
-                    end: 2
+            const results =
+                search.create({
+                    type: 'account',
+                    filters: [
+                        ['number', 'is', normalized],
+                        'AND',
+                        ['isinactive', 'is', 'F']
+                    ],
+                    columns: [
+                        search.createColumn({
+                            name: 'internalid'
+                        }),
+                        search.createColumn({
+                            name: 'number'
+                        }),
+                        search.createColumn({
+                            name: 'name'
+                        })
+                    ]
+                })
+                    .run()
+                    .getRange({
+                        start: 0,
+                        end: 2
+                    });
+
+
+            if (!results.length) {
+
+                throw new Error(
+                    `No se encontró la cuenta ${normalized} en NetSuite.`
+                );
+            }
+
+
+            if (results.length > 1) {
+
+                log.error({
+                    title:
+                        'Cuenta contable duplicada por número',
+
+                    details: {
+                        accountNumber:
+                            normalized,
+
+                        ids:
+                            results.map(
+                                result =>
+                                    result.getValue({
+                                        name:
+                                            'internalid'
+                                    })
+                            )
+                    }
+                });
+            }
+
+
+            const accountId =
+                results[0].getValue({
+                    name:
+                        'internalid'
                 });
 
 
-        if (!results.length) {
-
-            throw new Error(
-                `No se encontró la cuenta ${normalized} en NetSuite.`
-            );
-        }
-
-
-        if (results.length > 1) {
-
-            log.error({
+            log.audit({
                 title:
-                    'Cuenta contable duplicada por número',
+                    'Cuenta CxP localizada',
 
                 details: {
                     accountNumber:
                         normalized,
 
-                    ids:
-                        results.map(
-                            result =>
-                                result.getValue({
-                                    name:
-                                        'internalid'
-                                })
-                        )
+                    accountId,
+
+                    accountName:
+                        results[0].getValue({
+                            name:
+                                'name'
+                        })
                 }
             });
+
+
+            return String(
+                accountId || ''
+            );
+        } catch (functionError) {
+            logFunctionError('findAccountByNumber', functionError);
+            throw functionError;
         }
-
-
-        const accountId =
-            results[0].getValue({
-                name:
-                    'internalid'
-            });
-
-
-        log.audit({
-            title:
-                'Cuenta CxP localizada',
-
-            details: {
-                accountNumber:
-                    normalized,
-
-                accountId,
-
-                accountName:
-                    results[0].getValue({
-                        name:
-                            'name'
-                    })
-            }
-        });
-
-
-        return String(
-            accountId || ''
-        );
     };
 
 
@@ -656,14 +780,20 @@ define([
             return false;
         }
 
-        const normalizeOption = value =>
-            cleanText(value)
-                .toUpperCase()
-                .normalize('NFD')
-                .replace(/[\u0300-\u036f]/g, '')
-                .replace(/[.,]/g, '')
-                .replace(/\s+/g, ' ')
-                .trim();
+        const normalizeOption = value => {
+            try {
+                return cleanText(value)
+                    .toUpperCase()
+                    .normalize('NFD')
+                    .replace(/[\u0300-\u036f]/g, '')
+                    .replace(/[.,]/g, '')
+                    .replace(/\s+/g, ' ')
+                    .trim();
+            } catch (functionError) {
+                logFunctionError('setSelectByCandidates.normalizeOption', functionError);
+                throw functionError;
+            }
+        };
 
         try {
             const field = rec.getField({ fieldId });
@@ -761,39 +891,44 @@ define([
     // -------------------------------------------------------------------------
 
     const normalizeTaxType = value => {
-        const normalized = cleanText(value)
-            .toUpperCase()
-            .normalize('NFD')
-            .replace(/[\u0300-\u036f]/g, '');
+        try {
+            const normalized = cleanText(value)
+                .toUpperCase()
+                .normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '');
 
-        if (['TRANSFER', 'TRASLADO', 'IMPUESTO', 'TAX'].includes(normalized)) {
-            return 'TRANSFER';
+            if (['TRANSFER', 'TRASLADO', 'IMPUESTO', 'TAX'].includes(normalized)) {
+                return 'TRANSFER';
+            }
+
+            if ([
+                'WITHHOLDING',
+                'RETENCION',
+                'RETENTION',
+                'RETEFUENTE',
+                'RETEIVA',
+                'RETEICA'
+            ].includes(normalized)) {
+                return 'WITHHOLDING';
+            }
+
+            if (['DETRACTION', 'DETRACCION', 'DETRACCIONES'].includes(normalized)) {
+                return 'DETRACTION';
+            }
+
+            if (['EXEMPT', 'EXONERADO', 'EXONERADA'].includes(normalized)) {
+                return 'EXEMPT';
+            }
+
+            if (['UNAFFECTED', 'INAFECTO', 'INAFECTA', 'NO GRAVADO'].includes(normalized)) {
+                return 'UNAFFECTED';
+            }
+
+            return normalized;
+        } catch (functionError) {
+            logFunctionError('normalizeTaxType', functionError);
+            throw functionError;
         }
-
-        if ([
-            'WITHHOLDING',
-            'RETENCION',
-            'RETENTION',
-            'RETEFUENTE',
-            'RETEIVA',
-            'RETEICA'
-        ].includes(normalized)) {
-            return 'WITHHOLDING';
-        }
-
-        if (['DETRACTION', 'DETRACCION', 'DETRACCIONES'].includes(normalized)) {
-            return 'DETRACTION';
-        }
-
-        if (['EXEMPT', 'EXONERADO', 'EXONERADA'].includes(normalized)) {
-            return 'EXEMPT';
-        }
-
-        if (['UNAFFECTED', 'INAFECTO', 'INAFECTA', 'NO GRAVADO'].includes(normalized)) {
-            return 'UNAFFECTED';
-        }
-
-        return normalized;
     };
 
     /**
@@ -802,61 +937,73 @@ define([
      * Ambos valores se normalizan a 16.
      */
     const normalizeTaxRate = (value, countryCode = '') => {
+        try {
 
-        let text = cleanText(value);
+            let text = cleanText(value);
 
-        if (!text) {
-            return 0;
+            if (!text) {
+                return 0;
+            }
+
+            text = text
+                .replace(/\s/g, '')
+                .replace('%', '')
+                .replace(',', '.');
+
+            let rate = Number(text);
+
+            if (!Number.isFinite(rate)) {
+                return 0;
+            }
+
+            const country =
+                cleanText(countryCode).toUpperCase();
+
+            /*
+             * México CFDI expresa TasaOCuota como fracción:
+             * 0.160000 = 16%
+             * 0.080000 = 8%
+             *
+             * UBL (Colombia / Perú) ya expresa Percent como porcentaje:
+             * 19.00 = 19%
+             * 11.00 = 11%
+             * 0.80  = 0.80%
+             * 1.10  = 1.10%
+             */
+            if (
+                country === 'MX' &&
+                rate > 0 &&
+                rate <= 1
+            ) {
+                rate *= 100;
+            }
+
+            return Number(
+                rate.toFixed(6)
+            );
+        } catch (functionError) {
+            logFunctionError('normalizeTaxRate', functionError);
+            throw functionError;
         }
-
-        text = text
-            .replace(/\s/g, '')
-            .replace('%', '')
-            .replace(',', '.');
-
-        let rate = Number(text);
-
-        if (!Number.isFinite(rate)) {
-            return 0;
-        }
-
-        const country =
-            cleanText(countryCode).toUpperCase();
-
-        /*
-         * México CFDI expresa TasaOCuota como fracción:
-         * 0.160000 = 16%
-         * 0.080000 = 8%
-         *
-         * UBL (Colombia / Perú) ya expresa Percent como porcentaje:
-         * 19.00 = 19%
-         * 11.00 = 11%
-         * 0.80  = 0.80%
-         * 1.10  = 1.10%
-         */
-        if (
-            country === 'MX' &&
-            rate > 0 &&
-            rate <= 1
-        ) {
-            rate *= 100;
-        }
-
-        return Number(
-            rate.toFixed(6)
-        );
     };
 
-    const emptyTaxConfiguration = () => ({
-        taxId: '',
-        taxName: '',
-        mappingId: '',
-        configuredName: '',
-        configuredRate: '',
-        configuredBehavior: '',
-        options: [],
-        requiresSelection: false
-    });
+    const emptyTaxConfiguration = () => {
+        try {
+            return ({
+                taxId: '',
+                taxName: '',
+                mappingId: '',
+                configuredName: '',
+                configuredRate: '',
+                configuredBehavior: '',
+                options: [],
+                requiresSelection: false
+            });
+        } catch (functionError) {
+            logFunctionError('emptyTaxConfiguration', functionError);
+            throw functionError;
+        }
+    };
 
     /**
      * Obtiene el Tax Code de NetSuite desde el registro personalizado:
@@ -868,394 +1015,431 @@ define([
         taxType,
         taxRate
     ) => {
+        try {
 
-        const normalizedCountry =
-            cleanText(
-                countryCode
-            ).toUpperCase();
-
-
-        const normalizedCode =
-            cleanText(
-                authorityCode
-            ).toUpperCase();
+            const normalizedCountry =
+                cleanText(
+                    countryCode
+                ).toUpperCase();
 
 
-        const normalizedType =
-            normalizeTaxType(
-                taxType
-            );
+            const normalizedCode =
+                cleanText(
+                    authorityCode
+                ).toUpperCase();
 
 
-        const normalizedRate =
-            normalizeTaxRate(
-                taxRate,
-                normalizedCountry
-            );
-
-
-        if (
-            !normalizedCountry ||
-            !normalizedCode ||
-            !normalizedType
-        ) {
-
-            return emptyTaxConfiguration();
-        }
-
-
-        const expectedCountryName =
-            CONFIG.COUNTRY[
-                normalizedCountry
-            ]
-                ? CONFIG.COUNTRY[
-                    normalizedCountry
-                ].name
-                : normalizedCountry;
-
-
-        const normalizeText = value =>
-            cleanText(value)
-                .toUpperCase()
-                .normalize('NFD')
-                .replace(
-                    /[\u0300-\u036f]/g,
-                    ''
+            const normalizedType =
+                normalizeTaxType(
+                    taxType
                 );
 
 
-        log.audit({
-            title:
-                'Buscando configuración impuesto',
+            const normalizedRate =
+                normalizeTaxRate(
+                    taxRate,
+                    normalizedCountry
+                );
 
-            details: {
-                country:
-                    normalizedCountry,
 
-                countryName:
-                    expectedCountryName,
+            if (
+                !normalizedCountry ||
+                !normalizedCode ||
+                !normalizedType
+            ) {
 
-                xmlCode:
-                    normalizedCode,
-
-                behavior:
-                    normalizedType,
-
-                rate:
-                    normalizedRate
+                return emptyTaxConfiguration();
             }
-        });
 
 
-        // ============================================================
-        // BUSCAR POR CÓDIGO XML
-        //
-        // El país se filtrará posteriormente por texto porque
-        // custrecord_cs_tax_country es List/Record.
-        // ============================================================
+            const expectedCountryName =
+                CONFIG.COUNTRY[
+                    normalizedCountry
+                ]
+                    ? CONFIG.COUNTRY[
+                        normalizedCountry
+                    ].name
+                    : normalizedCountry;
 
-        const results =
-            search.create({
 
-                type:
-                    CONFIG.TAX_MAPPING.RECORD,
+            const normalizeText = value => {
+                try {
+                    return cleanText(value)
+                        .toUpperCase()
+                        .normalize('NFD')
+                        .replace(
+                            /[\u0300-\u036f]/g,
+                            ''
+                        );
+                } catch (functionError) {
+                    logFunctionError('findConfiguredTaxCode.normalizeText', functionError);
+                    throw functionError;
+                }
+            };
 
-                filters: [
 
-                    [
-                        CONFIG.TAX_MAPPING.XML_CODE,
-                        'is',
-                        normalizedCode
+            log.audit({
+                title:
+                    'Buscando configuración impuesto',
+
+                details: {
+                    country:
+                        normalizedCountry,
+
+                    countryName:
+                        expectedCountryName,
+
+                    xmlCode:
+                        normalizedCode,
+
+                    behavior:
+                        normalizedType,
+
+                    rate:
+                        normalizedRate
+                }
+            });
+
+
+            // ============================================================
+            // BUSCAR POR CÓDIGO XML
+            //
+            // El país se filtrará posteriormente por texto porque
+            // custrecord_cs_tax_country es List/Record.
+            // ============================================================
+
+            const results =
+                search.create({
+
+                    type:
+                        CONFIG.TAX_MAPPING.RECORD,
+
+                    filters: [
+
+                        [
+                            CONFIG.TAX_MAPPING.XML_CODE,
+                            'is',
+                            normalizedCode
+                        ],
+
+                        'AND',
+
+                        [
+                            'isinactive',
+                            'is',
+                            'F'
+                        ]
                     ],
 
-                    'AND',
+                    columns: [
 
-                    [
-                        'isinactive',
-                        'is',
-                        'F'
+                        'internalid',
+
+                        CONFIG.TAX_MAPPING.COUNTRY,
+
+                        CONFIG.TAX_MAPPING.BEHAVIOR,
+
+                        CONFIG.TAX_MAPPING.TAX_NAME,
+
+                        CONFIG.TAX_MAPPING.NETSUITE_TAX_CODE,
+
+                        CONFIG.TAX_MAPPING.RATE
                     ]
-                ],
 
-                columns: [
-
-                    'internalid',
-
-                    CONFIG.TAX_MAPPING.COUNTRY,
-
-                    CONFIG.TAX_MAPPING.BEHAVIOR,
-
-                    CONFIG.TAX_MAPPING.TAX_NAME,
-
-                    CONFIG.TAX_MAPPING.NETSUITE_TAX_CODE,
-
-                    CONFIG.TAX_MAPPING.RATE
-                ]
-
-            })
-                .run()
-                .getRange({
-                    start: 0,
-                    end: 100
-                });
+                })
+                    .run()
+                    .getRange({
+                        start: 0,
+                        end: 100
+                    });
 
 
-        // ============================================================
-        // PREPARAR CANDIDATOS
-        // ============================================================
+            // ============================================================
+            // PREPARAR CANDIDATOS
+            // ============================================================
 
-        const candidates =
-            results.map(
-                result => {
-
-
-                    const countryText =
-                        result.getText({
-                            name:
-                                CONFIG.TAX_MAPPING.COUNTRY
-                        }) || '';
+            const candidates =
+                results.map(
+                    result => {
 
 
-                    const countryValue =
-                        result.getValue({
-                            name:
-                                CONFIG.TAX_MAPPING.COUNTRY
-                        }) || '';
+                        const countryText =
+                            result.getText({
+                                name:
+                                    CONFIG.TAX_MAPPING.COUNTRY
+                            }) || '';
 
 
-                    const behaviorText =
-                        result.getText({
-                            name:
-                                CONFIG.TAX_MAPPING.BEHAVIOR
-                        }) || '';
+                        const countryValue =
+                            result.getValue({
+                                name:
+                                    CONFIG.TAX_MAPPING.COUNTRY
+                            }) || '';
 
 
-                    const behaviorValue =
-                        result.getValue({
-                            name:
-                                CONFIG.TAX_MAPPING.BEHAVIOR
-                        }) || '';
+                        const behaviorText =
+                            result.getText({
+                                name:
+                                    CONFIG.TAX_MAPPING.BEHAVIOR
+                            }) || '';
 
 
-                    const rateRaw =
-                        result.getValue({
-                            name:
-                                CONFIG.TAX_MAPPING.RATE
+                        const behaviorValue =
+                            result.getValue({
+                                name:
+                                    CONFIG.TAX_MAPPING.BEHAVIOR
+                            }) || '';
+
+
+                        const rateRaw =
+                            result.getValue({
+                                name:
+                                    CONFIG.TAX_MAPPING.RATE
+                            });
+
+
+                        const taxId =
+                            result.getValue({
+                                name:
+                                    CONFIG.TAX_MAPPING.NETSUITE_TAX_CODE
+                            }) || '';
+
+
+                        const taxText =
+                            result.getText({
+                                name:
+                                    CONFIG.TAX_MAPPING.NETSUITE_TAX_CODE
+                            }) || '';
+
+
+                        const configuredName =
+                            result.getText({
+                                name:
+                                    CONFIG.TAX_MAPPING.TAX_NAME
+                            }) ||
+                            result.getValue({
+                                name:
+                                    CONFIG.TAX_MAPPING.TAX_NAME
+                            }) ||
+                            '';
+
+
+                        const candidate = {
+
+                            mappingId:
+                                result.getValue({
+                                    name:
+                                        'internalid'
+                                }) || '',
+
+
+                            countryText,
+
+                            countryValue,
+
+
+                            behaviorText,
+
+                            behaviorValue,
+
+
+                            behavior:
+                                normalizeTaxType(
+                                    behaviorText ||
+                                    behaviorValue
+                                ),
+
+
+                            rateRaw,
+
+                            rate:
+                                normalizeTaxRate(
+                                    rateRaw,
+                                    normalizedCountry
+                                ),
+
+
+                            configuredName,
+
+                            taxId,
+
+                            taxText
+                        };
+
+
+                        log.audit({
+                            title:
+                                'Candidato configuración fiscal',
+
+                            details: {
+
+                                mappingId:
+                                    candidate.mappingId,
+
+                                countryText:
+                                    candidate.countryText,
+
+                                countryValue:
+                                    candidate.countryValue,
+
+                                behaviorText:
+                                    candidate.behaviorText,
+
+                                behaviorValue:
+                                    candidate.behaviorValue,
+
+                                behaviorNormalized:
+                                    candidate.behavior,
+
+                                rateRaw:
+                                    candidate.rateRaw,
+
+                                rateNormalized:
+                                    candidate.rate,
+
+                                requestedCountry:
+                                    normalizedCountry,
+
+                                requestedBehavior:
+                                    normalizedType,
+
+                                requestedRate:
+                                    normalizedRate,
+
+                                taxId:
+                                    candidate.taxId,
+
+                                taxText:
+                                    candidate.taxText
+                            }
                         });
 
 
-                    const taxId =
-                        result.getValue({
-                            name:
-                                CONFIG.TAX_MAPPING.NETSUITE_TAX_CODE
-                        }) || '';
+                        return candidate;
+                    }
+                );
 
 
-                    const taxText =
-                        result.getText({
-                            name:
-                                CONFIG.TAX_MAPPING.NETSUITE_TAX_CODE
-                        }) || '';
+            // ============================================================
+            // FILTRAR POR PAÍS
+            // ============================================================
+
+            const expectedCountry =
+                normalizeText(
+                    expectedCountryName
+                );
 
 
-                    const configuredName =
-                        result.getText({
-                            name:
-                                CONFIG.TAX_MAPPING.TAX_NAME
-                        }) ||
-                        result.getValue({
-                            name:
-                                CONFIG.TAX_MAPPING.TAX_NAME
-                        }) ||
-                        '';
+            const countryCandidates =
+                candidates.filter(
+                    candidate => {
+
+                        const configuredCountry =
+                            normalizeText(
+                                candidate.countryText
+                            );
 
 
-                    const candidate = {
-
-                        mappingId:
-                            result.getValue({
-                                name:
-                                    'internalid'
-                            }) || '',
-
-
-                        countryText,
-
-                        countryValue,
+                        return (
+                            configuredCountry ===
+                            expectedCountry
+                        );
+                    }
+                );
 
 
-                        behaviorText,
+            log.audit({
+                title:
+                    'Configuraciones después de filtrar país',
 
-                        behaviorValue,
+                details: {
+                    requestedCountry:
+                        normalizedCountry,
+
+                    expectedCountryName:
+                        expectedCountryName,
+
+                    totalCandidates:
+                        candidates.length,
+
+                    countryCandidates:
+                        countryCandidates.length
+                }
+            });
 
 
-                        behavior:
-                            normalizeTaxType(
-                                behaviorText ||
-                                behaviorValue
-                            ),
+            if (!countryCandidates.length) {
+
+                return emptyTaxConfiguration();
+            }
 
 
-                        rateRaw,
 
-                        rate:
-                            normalizeTaxRate(
-                                rateRaw,
-                                normalizedCountry
-                            ),
+            // ============================================================
+            // CASO ESPECIAL COLOMBIA - CÓDIGO ZZ
+            //
+            // Para ZZ tomamos directamente el Tax Code configurado en
+            // custrecord_cs_tax_netsuite, sin validar comportamiento/tasa.
+            // ============================================================
 
+            if (
+                normalizedCountry === 'CO' &&
+                normalizedCode === 'ZZ'
+            ) {
 
-                        configuredName,
+                const zzCandidates =
+                    countryCandidates.filter(
+                        candidate => candidate.taxId
+                    );
 
-                        taxId,
+                if (zzCandidates.length === 1) {
 
-                        taxText
-                    };
-
+                    const zz =
+                        zzCandidates[0];
 
                     log.audit({
                         title:
-                            'Candidato configuración fiscal',
+                            'Configuración ZZ encontrada',
 
                         details: {
-
-                            mappingId:
-                                candidate.mappingId,
-
-                            countryText:
-                                candidate.countryText,
-
-                            countryValue:
-                                candidate.countryValue,
-
-                            behaviorText:
-                                candidate.behaviorText,
-
-                            behaviorValue:
-                                candidate.behaviorValue,
-
-                            behaviorNormalized:
-                                candidate.behavior,
-
-                            rateRaw:
-                                candidate.rateRaw,
-
-                            rateNormalized:
-                                candidate.rate,
-
-                            requestedCountry:
+                            country:
                                 normalizedCountry,
 
-                            requestedBehavior:
-                                normalizedType,
+                            xmlCode:
+                                normalizedCode,
 
-                            requestedRate:
-                                normalizedRate,
+                            mappingId:
+                                zz.mappingId,
 
                             taxId:
-                                candidate.taxId,
+                                zz.taxId,
 
-                            taxText:
-                                candidate.taxText
+                            taxName:
+                                zz.taxText,
+
+                            configuredRate:
+                                zz.rate,
+
+                            configuredBehavior:
+                                zz.behavior
                         }
                     });
 
 
-                    return candidate;
-                }
-            );
-
-
-        // ============================================================
-        // FILTRAR POR PAÍS
-        // ============================================================
-
-        const expectedCountry =
-            normalizeText(
-                expectedCountryName
-            );
-
-
-        const countryCandidates =
-            candidates.filter(
-                candidate => {
-
-                    const configuredCountry =
-                        normalizeText(
-                            candidate.countryText
-                        );
-
-
-                    return (
-                        configuredCountry ===
-                        expectedCountry
-                    );
-                }
-            );
-
-
-        log.audit({
-            title:
-                'Configuraciones después de filtrar país',
-
-            details: {
-                requestedCountry:
-                    normalizedCountry,
-
-                expectedCountryName:
-                    expectedCountryName,
-
-                totalCandidates:
-                    candidates.length,
-
-                countryCandidates:
-                    countryCandidates.length
-            }
-        });
-
-
-        if (!countryCandidates.length) {
-
-            return emptyTaxConfiguration();
-        }
-
-
-
-        // ============================================================
-        // CASO ESPECIAL COLOMBIA - CÓDIGO ZZ
-        //
-        // Para ZZ tomamos directamente el Tax Code configurado en
-        // custrecord_cs_tax_netsuite, sin validar comportamiento/tasa.
-        // ============================================================
-
-        if (
-            normalizedCountry === 'CO' &&
-            normalizedCode === 'ZZ'
-        ) {
-
-            const zzCandidates =
-                countryCandidates.filter(
-                    candidate => candidate.taxId
-                );
-
-            if (zzCandidates.length === 1) {
-
-                const zz =
-                    zzCandidates[0];
-
-                log.audit({
-                    title:
-                        'Configuración ZZ encontrada',
-
-                    details: {
-                        country:
-                            normalizedCountry,
-
-                        xmlCode:
-                            normalizedCode,
+                    return {
 
                         mappingId:
                             zz.mappingId,
+
+                        configuredName:
+                            zz.configuredName,
+
+                        configuredRate:
+                            zz.rate,
+
+                        configuredBehavior:
+                            zz.behaviorText ||
+                            zz.behaviorValue,
 
                         taxId:
                             zz.taxId,
@@ -1263,258 +1447,364 @@ define([
                         taxName:
                             zz.taxText,
 
+                        options: [
+                            {
+                                mappingId:
+                                    zz.mappingId,
+
+                                configuredName:
+                                    zz.configuredName,
+
+                                configuredRate:
+                                    zz.rate,
+
+                                configuredBehavior:
+                                    zz.behaviorText ||
+                                    zz.behaviorValue,
+
+                                taxId:
+                                    zz.taxId,
+
+                                taxName:
+                                    zz.taxText
+                            }
+                        ],
+
+                        requiresSelection:
+                            false
+                    };
+                }
+
+
+                if (zzCandidates.length > 1) {
+
+                    log.error({
+                        title:
+                            'Más de una configuración ZZ',
+
+                        details: {
+                            country:
+                                normalizedCountry,
+
+                            xmlCode:
+                                normalizedCode,
+
+                            candidates:
+                                zzCandidates.map(
+                                    item => ({
+                                        mappingId:
+                                            item.mappingId,
+
+                                        taxId:
+                                            item.taxId,
+
+                                        taxName:
+                                            item.taxText
+                                    })
+                                )
+                        }
+                    });
+
+                    /*
+                     * Si hay más de uno no elegimos arbitrariamente.
+                     * Dejamos que el usuario seleccione.
+                     */
+
+                    const zzOptions =
+                        zzCandidates.map(
+                            zz => ({
+
+                                mappingId:
+                                    zz.mappingId,
+
+                                configuredName:
+                                    zz.configuredName,
+
+                                configuredRate:
+                                    zz.rate,
+
+                                configuredBehavior:
+                                    zz.behaviorText ||
+                                    zz.behaviorValue,
+
+                                taxId:
+                                    zz.taxId,
+
+                                taxName:
+                                    zz.taxText
+                            })
+                        );
+
+
+                    return {
+
+                        mappingId: '',
+                        configuredName:
+                            zzOptions[0]?.configuredName || '',
+
                         configuredRate:
-                            zz.rate,
+                            zzOptions[0]?.configuredRate || '',
 
                         configuredBehavior:
-                            zz.behavior
-                    }
-                });
+                            zzOptions[0]?.configuredBehavior || '',
 
+                        taxId: '',
+                        taxName: '',
 
-                return {
+                        options:
+                            zzOptions,
 
-                    mappingId:
-                        zz.mappingId,
+                        requiresSelection:
+                            true
+                    };
+                }
 
-                    configuredName:
-                        zz.configuredName,
-
-                    configuredRate:
-                        zz.rate,
-
-                    configuredBehavior:
-                        zz.behaviorText ||
-                        zz.behaviorValue,
-
-                    taxId:
-                        zz.taxId,
-
-                    taxName:
-                        zz.taxText,
-
-                    options: [
-                        {
-                            mappingId:
-                                zz.mappingId,
-
-                            configuredName:
-                                zz.configuredName,
-
-                            configuredRate:
-                                zz.rate,
-
-                            configuredBehavior:
-                                zz.behaviorText ||
-                                zz.behaviorValue,
-
-                            taxId:
-                                zz.taxId,
-
-                            taxName:
-                                zz.taxText
-                        }
-                    ],
-
-                    requiresSelection:
-                        false
-                };
-            }
-
-
-            if (zzCandidates.length > 1) {
 
                 log.error({
                     title:
-                        'Más de una configuración ZZ',
+                        'ZZ sin código NetSuite configurado',
 
                     details: {
                         country:
                             normalizedCountry,
 
                         xmlCode:
-                            normalizedCode,
-
-                        candidates:
-                            zzCandidates.map(
-                                item => ({
-                                    mappingId:
-                                        item.mappingId,
-
-                                    taxId:
-                                        item.taxId,
-
-                                    taxName:
-                                        item.taxText
-                                })
-                            )
+                            normalizedCode
                     }
                 });
 
-                /*
-                 * Si hay más de uno no elegimos arbitrariamente.
-                 * Dejamos que el usuario seleccione.
-                 */
 
-                const zzOptions =
-                    zzCandidates.map(
-                        zz => ({
-
-                            mappingId:
-                                zz.mappingId,
-
-                            configuredName:
-                                zz.configuredName,
-
-                            configuredRate:
-                                zz.rate,
-
-                            configuredBehavior:
-                                zz.behaviorText ||
-                                zz.behaviorValue,
-
-                            taxId:
-                                zz.taxId,
-
-                            taxName:
-                                zz.taxText
-                        })
-                    );
-
-
-                return {
-
-                    mappingId: '',
-                    configuredName:
-                        zzOptions[0]?.configuredName || '',
-
-                    configuredRate:
-                        zzOptions[0]?.configuredRate || '',
-
-                    configuredBehavior:
-                        zzOptions[0]?.configuredBehavior || '',
-
-                    taxId: '',
-                    taxName: '',
-
-                    options:
-                        zzOptions,
-
-                    requiresSelection:
-                        true
-                };
+                return emptyTaxConfiguration();
             }
+            // ============================================================
+            // MATCH EXACTO:
+            // PAÍS + CÓDIGO + COMPORTAMIENTO + TASA
+            // ============================================================
 
-
-            log.error({
-                title:
-                    'ZZ sin código NetSuite configurado',
-
-                details: {
-                    country:
-                        normalizedCountry,
-
-                    xmlCode:
-                        normalizedCode
-                }
-            });
-
-
-            return emptyTaxConfiguration();
-        }
-        // ============================================================
-        // MATCH EXACTO:
-        // PAÍS + CÓDIGO + COMPORTAMIENTO + TASA
-        // ============================================================
-
-        let matches =
-            countryCandidates.filter(
-                candidate => {
-
-                    const sameBehavior =
-                        candidate.behavior ===
-                        normalizedType;
-
-
-                    const sameRate =
-                        Math.abs(
-                            candidate.rate -
-                            normalizedRate
-                        ) < 0.01;
-
-
-                    return (
-                        sameBehavior &&
-                        sameRate
-                    );
-                }
-            );
-
-
-        // ============================================================
-        // FALLBACK
-        //
-        // Si existe exactamente un registro del mismo país/código/tasa
-        // pero el comportamiento del catálogo tiene alguna diferencia.
-        // ============================================================
-
-        if (!matches.length) {
-
-            const rateMatches =
+            let matches =
                 countryCandidates.filter(
-                    candidate =>
-                        Math.abs(
-                            candidate.rate -
-                            normalizedRate
-                        ) < 0.01
+                    candidate => {
+
+                        const sameBehavior =
+                            candidate.behavior ===
+                            normalizedType;
+
+
+                        const sameRate =
+                            Math.abs(
+                                candidate.rate -
+                                normalizedRate
+                            ) < 0.01;
+
+
+                        return (
+                            sameBehavior &&
+                            sameRate
+                        );
+                    }
                 );
 
 
-            if (
-                rateMatches.length === 1
-            ) {
+            // ============================================================
+            // FALLBACK
+            //
+            // Si existe exactamente un registro del mismo país/código/tasa
+            // pero el comportamiento del catálogo tiene alguna diferencia.
+            // ============================================================
 
-                matches =
-                    rateMatches;
+            if (!matches.length) {
+
+                const rateMatches =
+                    countryCandidates.filter(
+                        candidate =>
+                            Math.abs(
+                                candidate.rate -
+                                normalizedRate
+                            ) < 0.01
+                    );
 
 
-                log.audit({
+                if (
+                    rateMatches.length === 1
+                ) {
+
+                    matches =
+                        rateMatches;
+
+
+                    log.audit({
+                        title:
+                            'Configuración encontrada por fallback',
+
+                        details: {
+
+                            xmlCode:
+                                normalizedCode,
+
+                            requestedBehavior:
+                                normalizedType,
+
+                            configuredBehavior:
+                                rateMatches[0]
+                                    .behavior,
+
+                            rate:
+                                normalizedRate,
+
+                            mappingId:
+                                rateMatches[0]
+                                    .mappingId
+                        }
+                    });
+                }
+            }
+
+
+            // ============================================================
+            // SIN MATCH
+            // ============================================================
+
+            if (!matches.length) {
+
+                log.error({
                     title:
-                        'Configuración encontrada por fallback',
+                        'No existe configuración fiscal compatible',
 
                     details: {
+
+                        country:
+                            normalizedCountry,
 
                         xmlCode:
                             normalizedCode,
 
-                        requestedBehavior:
+                        behavior:
                             normalizedType,
-
-                        configuredBehavior:
-                            rateMatches[0]
-                                .behavior,
 
                         rate:
                             normalizedRate,
 
-                        mappingId:
-                            rateMatches[0]
-                                .mappingId
+                        candidates:
+                            countryCandidates
+                                .map(
+                                    item => ({
+
+                                        mappingId:
+                                            item.mappingId,
+
+                                        country:
+                                            item.countryText,
+
+                                        behavior:
+                                            item.behavior,
+
+                                        rate:
+                                            item.rate,
+
+                                        taxId:
+                                            item.taxId,
+
+                                        taxText:
+                                            item.taxText
+                                    })
+                                )
                     }
                 });
+
+
+                return emptyTaxConfiguration();
             }
-        }
 
 
-        // ============================================================
-        // SIN MATCH
-        // ============================================================
+            // ============================================================
+            // OPCIONES
+            // ============================================================
 
-        if (!matches.length) {
+            const options = [];
 
-            log.error({
+
+            const usedTaxIds =
+                new Set();
+
+
+            matches.forEach(
+                candidate => {
+
+                    if (
+                        !candidate.taxId
+                    ) {
+                        return;
+                    }
+
+
+                    /*
+                     * Si varios registros apuntan al mismo Tax Code,
+                     * mostramos una sola alternativa.
+                     */
+                    if (
+                        usedTaxIds.has(
+                            String(
+                                candidate.taxId
+                            )
+                        )
+                    ) {
+
+                        return;
+                    }
+
+
+                    usedTaxIds.add(
+                        String(
+                            candidate.taxId
+                        )
+                    );
+
+
+                    options.push({
+
+                        mappingId:
+                            candidate.mappingId,
+
+                        configuredName:
+                            candidate.configuredName,
+
+                        configuredRate:
+                            candidate.rate,
+
+                        configuredBehavior:
+                            candidate.behaviorText ||
+                            candidate.behaviorValue,
+
+                        taxId:
+                            candidate.taxId,
+
+                        taxName:
+                            candidate.taxText
+                    });
+                }
+            );
+
+
+            if (!options.length) {
+
+                return emptyTaxConfiguration();
+            }
+
+
+            // ============================================================
+            // 1 OPCIÓN = AUTOMÁTICA
+            // MÁS DE 1 = USUARIO SELECCIONA
+            // ============================================================
+
+            const selected =
+                options.length === 1
+                    ? options[0]
+                    : null;
+
+
+            log.audit({
                 title:
-                    'No existe configuración fiscal compatible',
+                    'Resultado configuración fiscal',
 
                 details: {
 
@@ -1530,372 +1820,251 @@ define([
                     rate:
                         normalizedRate,
 
-                    candidates:
-                        countryCandidates
-                            .map(
-                                item => ({
+                    options,
 
-                                    mappingId:
-                                        item.mappingId,
-
-                                    country:
-                                        item.countryText,
-
-                                    behavior:
-                                        item.behavior,
-
-                                    rate:
-                                        item.rate,
-
-                                    taxId:
-                                        item.taxId,
-
-                                    taxText:
-                                        item.taxText
-                                })
-                            )
+                    selected
                 }
             });
 
 
-            return emptyTaxConfiguration();
-        }
+            return {
+
+                mappingId:
+                    selected
+                        ? selected.mappingId
+                        : '',
 
 
-        // ============================================================
-        // OPCIONES
-        // ============================================================
-
-        const options = [];
-
-
-        const usedTaxIds =
-            new Set();
+                configuredName:
+                    selected
+                        ? selected.configuredName
+                        : options[0].configuredName,
 
 
-        matches.forEach(
-            candidate => {
-
-                if (
-                    !candidate.taxId
-                ) {
-                    return;
-                }
+                configuredRate:
+                    selected
+                        ? selected.configuredRate
+                        : options[0].configuredRate,
 
 
-                /*
-                 * Si varios registros apuntan al mismo Tax Code,
-                 * mostramos una sola alternativa.
-                 */
-                if (
-                    usedTaxIds.has(
-                        String(
-                            candidate.taxId
-                        )
-                    )
-                ) {
-
-                    return;
-                }
+                configuredBehavior:
+                    selected
+                        ? selected.configuredBehavior
+                        : options[0].configuredBehavior,
 
 
-                usedTaxIds.add(
-                    String(
-                        candidate.taxId
-                    )
-                );
+                taxId:
+                    selected
+                        ? selected.taxId
+                        : '',
 
 
-                options.push({
+                taxName:
+                    selected
+                        ? selected.taxName
+                        : '',
 
-                    mappingId:
-                        candidate.mappingId,
-
-                    configuredName:
-                        candidate.configuredName,
-
-                    configuredRate:
-                        candidate.rate,
-
-                    configuredBehavior:
-                        candidate.behaviorText ||
-                        candidate.behaviorValue,
-
-                    taxId:
-                        candidate.taxId,
-
-                    taxName:
-                        candidate.taxText
-                });
-            }
-        );
-
-
-        if (!options.length) {
-
-            return emptyTaxConfiguration();
-        }
-
-
-        // ============================================================
-        // 1 OPCIÓN = AUTOMÁTICA
-        // MÁS DE 1 = USUARIO SELECCIONA
-        // ============================================================
-
-        const selected =
-            options.length === 1
-                ? options[0]
-                : null;
-
-
-        log.audit({
-            title:
-                'Resultado configuración fiscal',
-
-            details: {
-
-                country:
-                    normalizedCountry,
-
-                xmlCode:
-                    normalizedCode,
-
-                behavior:
-                    normalizedType,
-
-                rate:
-                    normalizedRate,
 
                 options,
 
-                selected
-            }
-        });
-
-
-        return {
-
-            mappingId:
-                selected
-                    ? selected.mappingId
-                    : '',
-
-
-            configuredName:
-                selected
-                    ? selected.configuredName
-                    : options[0].configuredName,
-
-
-            configuredRate:
-                selected
-                    ? selected.configuredRate
-                    : options[0].configuredRate,
-
-
-            configuredBehavior:
-                selected
-                    ? selected.configuredBehavior
-                    : options[0].configuredBehavior,
-
-
-            taxId:
-                selected
-                    ? selected.taxId
-                    : '',
-
-
-            taxName:
-                selected
-                    ? selected.taxName
-                    : '',
-
-
-            options,
-
-            requiresSelection:
-                options.length > 1
-        };
+                requiresSelection:
+                    options.length > 1
+            };
+        } catch (functionError) {
+            logFunctionError('findConfiguredTaxCode', functionError);
+            throw functionError;
+        }
     };
 
 
     const getManualTaxMetadata = (countryCode, taxId) => {
+        try {
 
-        const normalizedCountry =
-            cleanText(countryCode).toUpperCase();
+            const normalizedCountry =
+                cleanText(countryCode).toUpperCase();
 
-        const normalizedTaxId =
-            cleanText(taxId);
+            const normalizedTaxId =
+                cleanText(taxId);
 
-        if (!normalizedCountry || !normalizedTaxId) {
-            return null;
-        }
-
-        const expectedCountryName =
-            CONFIG.COUNTRY[normalizedCountry]
-                ? CONFIG.COUNTRY[normalizedCountry].name
-                : normalizedCountry;
-
-        const normalizeText = value =>
-            cleanText(value)
-                .toUpperCase()
-                .normalize('NFD')
-                .replace(/[\u0300-\u036f]/g, '');
-
-        const expectedCountry =
-            normalizeText(expectedCountryName);
-
-        const results = search.create({
-            type: CONFIG.TAX_MAPPING.RECORD,
-            filters: [
-                [CONFIG.TAX_MAPPING.NETSUITE_TAX_CODE, 'anyof', normalizedTaxId],
-                'AND',
-                ['isinactive', 'is', 'F']
-            ],
-            columns: [
-                'internalid',
-                CONFIG.TAX_MAPPING.COUNTRY,
-                CONFIG.TAX_MAPPING.XML_CODE,
-                CONFIG.TAX_MAPPING.BEHAVIOR,
-                CONFIG.TAX_MAPPING.TAX_NAME,
-                CONFIG.TAX_MAPPING.NETSUITE_TAX_CODE,
-                CONFIG.TAX_MAPPING.RATE
-            ]
-        }).run().getRange({
-            start: 0,
-            end: 100
-        });
-
-        const candidates = results.map(result => {
-
-            const countryText =
-                result.getText({
-                    name: CONFIG.TAX_MAPPING.COUNTRY
-                }) || '';
-
-            if (
-                normalizeText(countryText) !==
-                expectedCountry
-            ) {
+            if (!normalizedCountry || !normalizedTaxId) {
                 return null;
             }
 
-            const behaviorText =
-                result.getText({
-                    name: CONFIG.TAX_MAPPING.BEHAVIOR
-                }) || '';
+            const expectedCountryName =
+                CONFIG.COUNTRY[normalizedCountry]
+                    ? CONFIG.COUNTRY[normalizedCountry].name
+                    : normalizedCountry;
 
-            const behaviorValue =
-                result.getValue({
-                    name: CONFIG.TAX_MAPPING.BEHAVIOR
-                }) || '';
-
-            return {
-                mappingId:
-                    result.getValue({
-                        name: 'internalid'
-                    }) || '',
-
-                authorityCode:
-                    result.getValue({
-                        name: CONFIG.TAX_MAPPING.XML_CODE
-                    }) || 'MANUAL',
-
-                type:
-                    normalizeTaxType(
-                        behaviorText ||
-                        behaviorValue
-                    ),
-
-                rate:
-                    normalizeTaxRate(
-                        result.getValue({
-                            name: CONFIG.TAX_MAPPING.RATE
-                        }),
-                        normalizedCountry
-                    ),
-
-                name:
-                    result.getText({
-                        name: CONFIG.TAX_MAPPING.TAX_NAME
-                    }) ||
-                    result.getValue({
-                        name: CONFIG.TAX_MAPPING.TAX_NAME
-                    }) ||
-                    '',
-
-                taxId:
-                    normalizedTaxId,
-
-                taxName:
-                    result.getText({
-                        name: CONFIG.TAX_MAPPING.NETSUITE_TAX_CODE
-                    }) || ''
+            const normalizeText = value => {
+                try {
+                    return cleanText(value)
+                        .toUpperCase()
+                        .normalize('NFD')
+                        .replace(/[\u0300-\u036f]/g, '');
+                } catch (functionError) {
+                    logFunctionError('getManualTaxMetadata.normalizeText', functionError);
+                    throw functionError;
+                }
             };
-        }).filter(Boolean);
+
+            const expectedCountry =
+                normalizeText(expectedCountryName);
+
+            const results = search.create({
+                type: CONFIG.TAX_MAPPING.RECORD,
+                filters: [
+                    [CONFIG.TAX_MAPPING.NETSUITE_TAX_CODE, 'anyof', normalizedTaxId],
+                    'AND',
+                    ['isinactive', 'is', 'F']
+                ],
+                columns: [
+                    'internalid',
+                    CONFIG.TAX_MAPPING.COUNTRY,
+                    CONFIG.TAX_MAPPING.XML_CODE,
+                    CONFIG.TAX_MAPPING.BEHAVIOR,
+                    CONFIG.TAX_MAPPING.TAX_NAME,
+                    CONFIG.TAX_MAPPING.NETSUITE_TAX_CODE,
+                    CONFIG.TAX_MAPPING.RATE
+                ]
+            }).run().getRange({
+                start: 0,
+                end: 100
+            });
+
+            const candidates = results.map(result => {
+
+                const countryText =
+                    result.getText({
+                        name: CONFIG.TAX_MAPPING.COUNTRY
+                    }) || '';
+
+                if (
+                    normalizeText(countryText) !==
+                    expectedCountry
+                ) {
+                    return null;
+                }
+
+                const behaviorText =
+                    result.getText({
+                        name: CONFIG.TAX_MAPPING.BEHAVIOR
+                    }) || '';
+
+                const behaviorValue =
+                    result.getValue({
+                        name: CONFIG.TAX_MAPPING.BEHAVIOR
+                    }) || '';
+
+                return {
+                    mappingId:
+                        result.getValue({
+                            name: 'internalid'
+                        }) || '',
+
+                    authorityCode:
+                        result.getValue({
+                            name: CONFIG.TAX_MAPPING.XML_CODE
+                        }) || 'MANUAL',
+
+                    type:
+                        normalizeTaxType(
+                            behaviorText ||
+                            behaviorValue
+                        ),
+
+                    rate:
+                        normalizeTaxRate(
+                            result.getValue({
+                                name: CONFIG.TAX_MAPPING.RATE
+                            }),
+                            normalizedCountry
+                        ),
+
+                    name:
+                        result.getText({
+                            name: CONFIG.TAX_MAPPING.TAX_NAME
+                        }) ||
+                        result.getValue({
+                            name: CONFIG.TAX_MAPPING.TAX_NAME
+                        }) ||
+                        '',
+
+                    taxId:
+                        normalizedTaxId,
+
+                    taxName:
+                        result.getText({
+                            name: CONFIG.TAX_MAPPING.NETSUITE_TAX_CODE
+                        }) || ''
+                };
+            }).filter(Boolean);
 
 
-        const uniqueDefinitions = [];
-        const used = new Set();
+            const uniqueDefinitions = [];
+            const used = new Set();
 
-        candidates.forEach(item => {
+            candidates.forEach(item => {
 
-            const key = [
-                item.type,
-                item.rate
-            ].join('|');
+                const key = [
+                    item.type,
+                    item.rate
+                ].join('|');
 
-            if (!used.has(key)) {
-                used.add(key);
-                uniqueDefinitions.push(item);
+                if (!used.has(key)) {
+                    used.add(key);
+                    uniqueDefinitions.push(item);
+                }
+            });
+
+
+            if (!uniqueDefinitions.length) {
+                throw new Error(
+                    `El código de impuesto NetSuite ${normalizedTaxId} ` +
+                    `no tiene una configuración fiscal activa para ${expectedCountryName}.`
+                );
             }
-        });
 
 
-        if (!uniqueDefinitions.length) {
-            throw new Error(
-                `El código de impuesto NetSuite ${normalizedTaxId} ` +
-                `no tiene una configuración fiscal activa para ${expectedCountryName}.`
-            );
+            if (uniqueDefinitions.length > 1) {
+                throw new Error(
+                    `El código de impuesto NetSuite ${normalizedTaxId} tiene más de una ` +
+                    `configuración fiscal para ${expectedCountryName}.`
+                );
+            }
+
+
+            const selected =
+                uniqueDefinitions[0];
+
+
+            if (
+                !selected.type
+            ) {
+                throw new Error(
+                    `No fue posible determinar el comportamiento fiscal del código ` +
+                    `${selected.taxName || normalizedTaxId}.`
+                );
+            }
+
+
+            if (
+                selected.rate <= 0 &&
+                !['EXEMPT', 'UNAFFECTED'].includes(
+                    selected.type
+                )
+            ) {
+                throw new Error(
+                    `El código de impuesto ${selected.taxName || normalizedTaxId} ` +
+                    `no tiene una tasa válida configurada.`
+                );
+            }
+
+
+            return selected;
+        } catch (functionError) {
+            logFunctionError('getManualTaxMetadata', functionError);
+            throw functionError;
         }
-
-
-        if (uniqueDefinitions.length > 1) {
-            throw new Error(
-                `El código de impuesto NetSuite ${normalizedTaxId} tiene más de una ` +
-                `configuración fiscal para ${expectedCountryName}.`
-            );
-        }
-
-
-        const selected =
-            uniqueDefinitions[0];
-
-
-        if (
-            !selected.type
-        ) {
-            throw new Error(
-                `No fue posible determinar el comportamiento fiscal del código ` +
-                `${selected.taxName || normalizedTaxId}.`
-            );
-        }
-
-
-        if (
-            selected.rate <= 0 &&
-            !['EXEMPT', 'UNAFFECTED'].includes(
-                selected.type
-            )
-        ) {
-            throw new Error(
-                `El código de impuesto ${selected.taxName || normalizedTaxId} ` +
-                `no tiene una tasa válida configurada.`
-            );
-        }
-
-
-        return selected;
     };
 
 
@@ -1904,259 +2073,269 @@ define([
         taxes,
         manualTaxes
     ) => {
+        try {
 
-        const target =
-            Array.isArray(taxes)
-                ? taxes
-                : [];
+            const target =
+                Array.isArray(taxes)
+                    ? taxes
+                    : [];
 
-        (manualTaxes || []).forEach(
-            (manual, index) => {
+            (manualTaxes || []).forEach(
+                (manual, index) => {
 
-                const taxId =
-                    cleanText(
-                        manual.taxId
-                    );
+                    const taxId =
+                        cleanText(
+                            manual.taxId
+                        );
 
-                /*
-                 * En una línea manual el usuario captura la BASE,
-                 * no el importe final del impuesto.
-                 *
-                 * manual.amount se conserva como fallback de compatibilidad
-                 * con pantallas anteriores.
-                 */
-                const taxableAmount =
-                    Math.abs(
-                        toNumber(
-                            manual.base !== undefined &&
-                                manual.base !== null &&
-                                manual.base !== ''
-                                ? manual.base
-                                : manual.amount
-                        )
-                    );
-
-
-                if (!taxId && !taxableAmount) {
-                    return;
-                }
-
-
-                if (!taxId) {
-                    throw new Error(
-                        `La línea manual de impuesto ${index + 1} no tiene código de impuesto NetSuite.`
-                    );
-                }
-
-
-                if (taxableAmount <= 0) {
-                    throw new Error(
-                        `La línea manual de impuesto ${index + 1} debe tener una base mayor a cero.`
-                    );
-                }
-
-
-                const metadata =
-                    getManualTaxMetadata(
-                        countryCode,
-                        taxId
-                    );
-
-
-                const rate =
-                    toNumber(
-                        metadata.rate
-                    );
-
-
-                const amount =
-                    ['EXEMPT', 'UNAFFECTED'].includes(
-                        metadata.type
-                    )
-                        ? 0
-                        : Number(
-                            (
-                                taxableAmount *
-                                (rate / 100)
-                            ).toFixed(2)
+                    /*
+                     * En una línea manual el usuario captura la BASE,
+                     * no el importe final del impuesto.
+                     *
+                     * manual.amount se conserva como fallback de compatibilidad
+                     * con pantallas anteriores.
+                     */
+                    const taxableAmount =
+                        Math.abs(
+                            toNumber(
+                                manual.base !== undefined &&
+                                    manual.base !== null &&
+                                    manual.base !== ''
+                                    ? manual.base
+                                    : manual.amount
+                            )
                         );
 
 
-                log.audit({
-                    title: 'Impuesto manual calculado',
-                    details: {
-                        countryCode,
-                        taxId: metadata.taxId,
-                        taxName: metadata.taxName,
-                        type: metadata.type,
-                        rate,
-                        taxableAmount,
-                        calculatedAmount: amount
+                    if (!taxId && !taxableAmount) {
+                        return;
                     }
-                });
 
 
-                target.push({
-                    type:
-                        metadata.type,
-
-                    authorityCode:
-                        metadata.authorityCode ||
-                        'MANUAL',
-
-                    name:
-                        metadata.name ||
-                        metadata.taxName ||
-                        'Impuesto manual',
-
-                    rate,
-
-                    originalRate:
-                        String(rate),
-
-                    taxableAmount,
-
-                    amount,
-
-                    taxId:
-                        metadata.taxId,
-
-                    taxName:
-                        metadata.taxName,
-
-                    mappingId:
-                        metadata.mappingId,
-
-                    taxOptions:
-                        [],
-
-                    requiresTaxSelection:
-                        false,
-
-                    manual:
-                        true
-                });
-            }
-        );
+                    if (!taxId) {
+                        throw new Error(
+                            `La línea manual de impuesto ${index + 1} no tiene código de impuesto NetSuite.`
+                        );
+                    }
 
 
-        return target;
+                    if (taxableAmount <= 0) {
+                        throw new Error(
+                            `La línea manual de impuesto ${index + 1} debe tener una base mayor a cero.`
+                        );
+                    }
+
+
+                    const metadata =
+                        getManualTaxMetadata(
+                            countryCode,
+                            taxId
+                        );
+
+
+                    const rate =
+                        toNumber(
+                            metadata.rate
+                        );
+
+
+                    const amount =
+                        ['EXEMPT', 'UNAFFECTED'].includes(
+                            metadata.type
+                        )
+                            ? 0
+                            : Number(
+                                (
+                                    taxableAmount *
+                                    (rate / 100)
+                                ).toFixed(2)
+                            );
+
+
+                    log.audit({
+                        title: 'Impuesto manual calculado',
+                        details: {
+                            countryCode,
+                            taxId: metadata.taxId,
+                            taxName: metadata.taxName,
+                            type: metadata.type,
+                            rate,
+                            taxableAmount,
+                            calculatedAmount: amount
+                        }
+                    });
+
+
+                    target.push({
+                        type:
+                            metadata.type,
+
+                        authorityCode:
+                            metadata.authorityCode ||
+                            'MANUAL',
+
+                        name:
+                            metadata.name ||
+                            metadata.taxName ||
+                            'Impuesto manual',
+
+                        rate,
+
+                        originalRate:
+                            String(rate),
+
+                        taxableAmount,
+
+                        amount,
+
+                        taxId:
+                            metadata.taxId,
+
+                        taxName:
+                            metadata.taxName,
+
+                        mappingId:
+                            metadata.mappingId,
+
+                        taxOptions:
+                            [],
+
+                        requiresTaxSelection:
+                            false,
+
+                        manual:
+                            true
+                    });
+                }
+            );
+
+
+            return target;
+        } catch (functionError) {
+            logFunctionError('appendManualTaxes', functionError);
+            throw functionError;
+        }
     };
 
 
     const enrichAndGroupTaxes = (countryCode, taxes) => {
+        try {
 
-        const grouped = {};
+            const grouped = {};
 
-        (taxes || []).forEach(tax => {
+            (taxes || []).forEach(tax => {
 
-            const type =
-                normalizeTaxType(
-                    tax.type
-                );
+                const type =
+                    normalizeTaxType(
+                        tax.type
+                    );
 
-            const authorityCode =
-                cleanText(
-                    tax.authorityCode
-                ).toUpperCase();
+                const authorityCode =
+                    cleanText(
+                        tax.authorityCode
+                    ).toUpperCase();
 
-            const normalizedRate =
-                normalizeTaxRate(
-                    tax.rate,
-                    countryCode
-                );
+                const normalizedRate =
+                    normalizeTaxRate(
+                        tax.rate,
+                        countryCode
+                    );
 
-            const taxData =
-                findConfiguredTaxCode(
-                    countryCode,
-                    authorityCode,
+                const taxData =
+                    findConfiguredTaxCode(
+                        countryCode,
+                        authorityCode,
+                        type,
+                        normalizedRate
+                    );
+
+
+                const enriched = {
+
                     type,
-                    normalizedRate
-                );
 
+                    authorityCode,
 
-            const enriched = {
+                    name:
+                        taxData.configuredName ||
+                        tax.name ||
+                        '',
 
-                type,
+                    rate:
+                        normalizedRate,
 
-                authorityCode,
+                    originalRate:
+                        String(
+                            tax.rate ?? ''
+                        ),
 
-                name:
-                    taxData.configuredName ||
-                    tax.name ||
-                    '',
+                    taxableAmount:
+                        toNumber(
+                            tax.taxableAmount
+                        ),
 
-                rate:
-                    normalizedRate,
+                    amount:
+                        toNumber(
+                            tax.amount
+                        ),
 
-                originalRate:
-                    String(
-                        tax.rate ?? ''
-                    ),
+                    taxId:
+                        taxData.taxId,
 
-                taxableAmount:
-                    toNumber(
-                        tax.taxableAmount
-                    ),
+                    taxName:
+                        taxData.taxName,
 
-                amount:
-                    toNumber(
-                        tax.amount
-                    ),
+                    mappingId:
+                        taxData.mappingId,
 
-                taxId:
-                    taxData.taxId,
+                    taxOptions:
+                        taxData.options || [],
 
-                taxName:
-                    taxData.taxName,
-
-                mappingId:
-                    taxData.mappingId,
-
-                taxOptions:
-                    taxData.options || [],
-
-                requiresTaxSelection:
-                    Boolean(
-                        taxData.requiresSelection
-                    )
-            };
-
-
-            const key = [
-
-                enriched.type,
-
-                enriched.authorityCode,
-
-                enriched.rate,
-
-                enriched.taxId
-
-            ].join('|');
-
-
-            if (!grouped[key]) {
-
-                grouped[key] = {
-                    ...enriched,
-                    taxableAmount: 0,
-                    amount: 0
+                    requiresTaxSelection:
+                        Boolean(
+                            taxData.requiresSelection
+                        )
                 };
-            }
 
 
-            grouped[key].taxableAmount +=
-                enriched.taxableAmount;
+                const key = [
 
-            grouped[key].amount +=
-                enriched.amount;
-        });
+                    enriched.type,
+
+                    enriched.authorityCode,
+
+                    enriched.rate,
+
+                    enriched.taxId
+
+                ].join('|');
 
 
-        return Object.values(
-            grouped
-        );
+                if (!grouped[key]) {
+
+                    grouped[key] = {
+                        ...enriched,
+                        taxableAmount: 0,
+                        amount: 0
+                    };
+                }
+
+
+                grouped[key].taxableAmount +=
+                    enriched.taxableAmount;
+
+                grouped[key].amount +=
+                    enriched.amount;
+            });
+
+
+            return Object.values(
+                grouped
+            );
+        } catch (functionError) {
+            logFunctionError('enrichAndGroupTaxes', functionError);
+            throw functionError;
+        }
     };
     // -------------------------------------------------------------------------
     // Adaptador México - CFDI 4.0
@@ -2168,79 +2347,84 @@ define([
     };
 
     const parseMexico = document => {
-        const comprobante = selectFirst(document, '//cfdi:Comprobante', MX_NS);
-        if (!comprobante) {
-            throw new Error('No se encontró cfdi:Comprobante de CFDI 4.0.');
-        }
+        try {
+            const comprobante = selectFirst(document, '//cfdi:Comprobante', MX_NS);
+            if (!comprobante) {
+                throw new Error('No se encontró cfdi:Comprobante de CFDI 4.0.');
+            }
 
-        const emisor = selectFirst(document, '//cfdi:Emisor', MX_NS);
-        const receptor = selectFirst(document, '//cfdi:Receptor', MX_NS);
-        const timbre = selectFirst(document, '//tfd:TimbreFiscalDigital', MX_NS);
+            const emisor = selectFirst(document, '//cfdi:Emisor', MX_NS);
+            const receptor = selectFirst(document, '//cfdi:Receptor', MX_NS);
+            const timbre = selectFirst(document, '//tfd:TimbreFiscalDigital', MX_NS);
 
-        if (!emisor || !receptor || !timbre) {
-            throw new Error('El CFDI no contiene Emisor, Receptor o Timbre Fiscal Digital.');
-        }
+            if (!emisor || !receptor || !timbre) {
+                throw new Error('El CFDI no contiene Emisor, Receptor o Timbre Fiscal Digital.');
+            }
 
-        const paymentForm = getAttributeAny(comprobante, ['FormaPago']);
-        const paymentMethod = getAttributeAny(comprobante, ['MetodoPago']);
+            const paymentForm = getAttributeAny(comprobante, ['FormaPago']);
+            const paymentMethod = getAttributeAny(comprobante, ['MetodoPago']);
 
-        const validPayment =
-            (paymentForm === '99' && paymentMethod === 'PPD') ||
-            (paymentForm === '03' && paymentMethod === 'PUE');
+            const validPayment =
+                (paymentForm === '99' && paymentMethod === 'PPD') ||
+                (paymentForm === '03' && paymentMethod === 'PUE');
 
-        if (!validPayment) {
-            throw new Error(
-                `Combinación FormaPago/MetodoPago no permitida: ${paymentForm || 'N/A'} / ${paymentMethod || 'N/A'}. ` +
-                'Se permite 99 + PPD o 03 + PUE.'
-            );
-        }
+            if (!validPayment) {
+                throw new Error(
+                    `Combinación FormaPago/MetodoPago no permitida: ${paymentForm || 'N/A'} / ${paymentMethod || 'N/A'}. ` +
+                    'Se permite 99 + PPD o 03 + PUE.'
+                );
+            }
 
-        // Número visible del comprobante mexicano: Serie + Folio.
-        const serie = cleanText(getAttributeAny(comprobante, ['Serie']));
-        const folio = cleanText(getAttributeAny(comprobante, ['Folio']));
-        const documentNumber = [serie, folio].filter(Boolean).join('');
-        const uuid = cleanText(getAttributeAny(timbre, ['UUID']));
+            // Número visible del comprobante mexicano: Serie + Folio.
+            const serie = cleanText(getAttributeAny(comprobante, ['Serie']));
+            const folio = cleanText(getAttributeAny(comprobante, ['Folio']));
+            const documentNumber = [serie, folio].filter(Boolean).join('');
+            const uuid = cleanText(getAttributeAny(timbre, ['UUID']));
 
-        const taxes = [];
+            const taxes = [];
 
-        selectNodes(document, '//cfdi:Traslado[@TasaOCuota]', MX_NS).forEach(node => {
-            taxes.push({
-                type: 'TRANSFER',
-                authorityCode: getAttributeAny(node, ['Impuesto']),
-                name: 'Traslado',
-                rate: getAttributeAny(node, ['TasaOCuota']),
-                amount: getAttributeAny(node, ['Importe'])
+            selectNodes(document, '//cfdi:Traslado[@TasaOCuota]', MX_NS).forEach(node => {
+                taxes.push({
+                    type: 'TRANSFER',
+                    authorityCode: getAttributeAny(node, ['Impuesto']),
+                    name: 'Traslado',
+                    rate: getAttributeAny(node, ['TasaOCuota']),
+                    amount: getAttributeAny(node, ['Importe'])
+                });
             });
-        });
 
-        selectNodes(document, '//cfdi:Retencion[@TasaOCuota]', MX_NS).forEach(node => {
-            taxes.push({
-                type: 'WITHHOLDING',
-                authorityCode: getAttributeAny(node, ['Impuesto']),
-                name: 'Retención',
-                rate: getAttributeAny(node, ['TasaOCuota']),
-                amount: getAttributeAny(node, ['Importe'])
+            selectNodes(document, '//cfdi:Retencion[@TasaOCuota]', MX_NS).forEach(node => {
+                taxes.push({
+                    type: 'WITHHOLDING',
+                    authorityCode: getAttributeAny(node, ['Impuesto']),
+                    name: 'Retención',
+                    rate: getAttributeAny(node, ['TasaOCuota']),
+                    amount: getAttributeAny(node, ['Importe'])
+                });
             });
-        });
 
-        return {
-            countryCode: 'MX',
-            countryName: CONFIG.COUNTRY.MX.name,
-            // Identificador fiscal único.
-            documentId: uuid || documentNumber,
-            // Número que debe ir en N° Referencia / tranid.
-            documentNumber: documentNumber || uuid,
-            issueDate: getAttributeAny(comprobante, ['Fecha']),
-            currencyCode: getAttributeAny(comprobante, ['Moneda']),
-            subtotal: toNumber(getAttributeAny(comprobante, ['SubTotal'])),
-            total: toNumber(getAttributeAny(comprobante, ['Total'])),
-            supplierTaxId: getAttributeAny(emisor, ['Rfc']),
-            supplierName: getAttributeAny(emisor, ['Nombre']),
-            customerTaxId: getAttributeAny(receptor, ['Rfc']),
-            paymentForm,
-            paymentMethod,
-            taxes
-        };
+            return {
+                countryCode: 'MX',
+                countryName: CONFIG.COUNTRY.MX.name,
+                // Identificador fiscal único.
+                documentId: uuid || documentNumber,
+                // Número que debe ir en N° Referencia / tranid.
+                documentNumber: documentNumber || uuid,
+                issueDate: getAttributeAny(comprobante, ['Fecha']),
+                currencyCode: getAttributeAny(comprobante, ['Moneda']),
+                subtotal: toNumber(getAttributeAny(comprobante, ['SubTotal'])),
+                total: toNumber(getAttributeAny(comprobante, ['Total'])),
+                supplierTaxId: getAttributeAny(emisor, ['Rfc']),
+                supplierName: getAttributeAny(emisor, ['Nombre']),
+                customerTaxId: getAttributeAny(receptor, ['Rfc']),
+                paymentForm,
+                paymentMethod,
+                taxes
+            };
+        } catch (functionError) {
+            logFunctionError('parseMexico', functionError);
+            throw functionError;
+        }
     };
 
     // -------------------------------------------------------------------------
@@ -2248,781 +2432,812 @@ define([
     // -------------------------------------------------------------------------
 
     const parseUblParty = (document, partyType) => {
+        try {
 
-        const isSupplier =
-            partyType === 'supplier';
+            const isSupplier =
+                partyType === 'supplier';
 
-        const root =
-            isSupplier
-                ? 'AccountingSupplierParty'
-                : 'AccountingCustomerParty';
+            const root =
+                isSupplier
+                    ? 'AccountingSupplierParty'
+                    : 'AccountingCustomerParty';
 
-        const rootPath =
-            `//*[local-name()='${root}']`;
+            const rootPath =
+                `//*[local-name()='${root}']`;
 
-        const partyPath =
-            rootPath + `/*[local-name()='Party']`;
+            const partyPath =
+                rootPath + `/*[local-name()='Party']`;
 
 
-        const identificationNode =
-            selectFirst(
-                document,
-                partyPath +
-                `/*[local-name()='PartyIdentification']` +
-                `/*[local-name()='ID']`
-            );
-
-
-        const companyIdNode =
-            selectFirst(
-                document,
-                partyPath +
-                `/*[local-name()='PartyTaxScheme']` +
-                `/*[local-name()='CompanyID']`
-            );
-
-
-        const identificationTaxId =
-            nodeText(
-                identificationNode
-            );
-
-
-        const documentTypeCode =
-            cleanText(
-                getAttributeAny(
-                    identificationNode,
-                    ['schemeID']
-                ) ||
-                getAttributeAny(
-                    companyIdNode,
-                    ['schemeName']
-                )
-            );
-
-
-        const documentTypeName =
-            cleanText(
-                getAttributeAny(
-                    identificationNode,
-                    ['schemeName']
-                )
-            );
-
-
-        const taxId =
-            nodeText(companyIdNode) ||
-            firstText(document, [
-                rootPath + `/*[local-name()='CustomerAssignedAccountID']`
-            ]) ||
-            identificationTaxId;
-
-
-        const legalName =
-            firstText(document, [
-                partyPath +
-                `/*[local-name()='PartyLegalEntity']` +
-                `/*[local-name()='RegistrationName']`,
-
-                partyPath +
-                `/*[local-name()='PartyTaxScheme']` +
-                `/*[local-name()='RegistrationName']`
-            ]);
-
-
-        const commercialName =
-            firstText(document, [
-                partyPath +
-                `/*[local-name()='PartyName']` +
-                `/*[local-name()='Name']`
-            ]) ||
-            legalName;
-
-
-        const verificationDigit =
-            cleanText(
-                getAttributeAny(
-                    companyIdNode,
-                    ['schemeID']
-                )
-            );
-
-
-        const addressBasePaths = [
-            partyPath + `/*[local-name()='PostalAddress']`,
-            partyPath +
-            `/*[local-name()='PhysicalLocation']` +
-            `/*[local-name()='Address']`
-        ];
-
-
-        const getAddressText = childPath =>
-            firstText(
-                document,
-                addressBasePaths.map(base =>
-                    base + childPath
-                )
-            );
-
-
-        const countryCode =
-            getAddressText(
-                `/*[local-name()='Country']` +
-                `/*[local-name()='IdentificationCode']`
-            );
-
-
-        const countryName =
-            getAddressText(
-                `/*[local-name()='Country']` +
-                `/*[local-name()='Name']`
-            );
-
-
-        const stateCode =
-            getAddressText(
-                `/*[local-name()='CountrySubentityCode']`
-            );
-
-
-        const stateName =
-            getAddressText(
-                `/*[local-name()='CountrySubentity']`
-            );
-
-
-        const cityCode =
-            getAddressText(
-                `/*[local-name()='ID']`
-            );
-
-
-        const cityName =
-            getAddressText(
-                `/*[local-name()='CityName']`
-            );
-
-
-        const postalCode =
-            getAddressText(
-                `/*[local-name()='PostalZone']`
-            );
-
-
-        const contributorType =
-            firstText(document, [
-                rootPath +
-                `/*[local-name()='AdditionalAccountID']`,
-
-                partyPath +
-                `/*[local-name()='AdditionalAccountID']`
-            ]);
-
-
-        const fiscalRegime =
-            firstText(document, [
-                partyPath +
-                `/*[local-name()='PartyTaxScheme']` +
-                `/*[local-name()='TaxScheme']` +
-                `/*[local-name()='Name']`
-            ]);
-
-
-        const fiscalResponsibility =
-            firstText(document, [
-                partyPath +
-                `/*[local-name()='PartyTaxScheme']` +
-                `/*[local-name()='TaxLevelCode']`
-            ]);
-
-
-        const economicActivity =
-            firstText(document, [
-                partyPath +
-                `/*[local-name()='PartyLegalEntity']` +
-                `/*[local-name()='CorporateRegistrationScheme']` +
-                `/*[local-name()='ID']`,
-
-                partyPath +
-                `/*[local-name()='PartyLegalEntity']` +
-                `/*[local-name()='CorporateRegistrationScheme']` +
-                `/*[local-name()='Name']`
-            ]);
-
-
-        return {
-            taxId,
-            name:
-                legalName ||
-                commercialName,
-
-            legalName,
-            commercialName,
-
-            schemeID:
-                documentTypeCode,
-
-            documentTypeCode,
-            documentTypeName,
-
-            verificationDigit,
-
-            countryCode,
-            countryName,
-
-            stateCode,
-            stateName,
-
-            cityCode,
-            cityName,
-
-            postalCode,
-
-            contributorType,
-            fiscalRegime,
-            fiscalResponsibility,
-            economicActivity
-        };
-    };
-
-    const parseUblTaxSubtotal = (subtotalNode, forcedType = '') => {
-        const amountNode = selectFirst(
-            subtotalNode,
-            "./*[local-name()='TaxAmount']"
-        );
-
-        const percentNode = selectFirst(
-            subtotalNode,
-            ".//*[local-name()='TaxCategory']/*[local-name()='Percent']"
-        );
-
-        const taxableAmountNode = selectFirst(
-            subtotalNode,
-            "./*[local-name()='TaxableAmount']"
-        );
-
-        const idNode = selectFirst(
-            subtotalNode,
-            ".//*[local-name()='TaxCategory']" +
-            "/*[local-name()='TaxScheme']" +
-            "/*[local-name()='ID']"
-        );
-
-        const nameNode = selectFirst(
-            subtotalNode,
-            ".//*[local-name()='TaxCategory']" +
-            "/*[local-name()='TaxScheme']" +
-            "/*[local-name()='Name']"
-        );
-
-        const authorityCode = nodeText(idNode).toUpperCase();
-        const taxName = nodeText(nameNode);
-        const taxAmount = toNumber(nodeText(amountNode));
-        const taxableAmount = toNumber(nodeText(taxableAmountNode));
-        const xmlRate = normalizeTaxRate(nodeText(percentNode), 'UBL');
-
-        // Algunos XML SUNAT informan Percent como 0 o lo omiten a nivel global.
-        // Cuando existe base e importe, se calcula la tasa efectiva.
-        const calculatedRate =
-            (!xmlRate && taxableAmount > 0 && taxAmount > 0)
-                ? Number(
-                    (
-                        Math.round(
-                            ((taxAmount / taxableAmount) * 100) * 100
-                        ) / 100
-                    ).toFixed(2)
-                )
-                : xmlRate;
-
-        let type = forcedType;
-
-        if (!type) {
-            if (['05', '06', '07', 'ZZ', 'RET', 'WITHHOLDING'].includes(authorityCode) ||
-                /RET|WITHHOLD/i.test(taxName)) {
-                type = 'WITHHOLDING';
-            } else if (authorityCode === '9997' || /EXONERAD/i.test(taxName)) {
-                type = 'EXEMPT';
-            } else if (authorityCode === '9998' || /INAFECT/i.test(taxName)) {
-                type = 'UNAFFECTED';
-            } else if (/DETRACC/i.test(authorityCode) || /DETRACC/i.test(taxName)) {
-                type = 'DETRACTION';
-            } else {
-                type = 'TRANSFER';
-            }
-        }
-
-        return {
-            type,
-            authorityCode,
-            name: taxName,
-            rate: calculatedRate,
-            originalRate: nodeText(percentNode),
-            taxableAmount,
-            amount: taxAmount
-        };
-    };
-
-    const parseUblTaxes = document => {
-
-        const taxes = [];
-
-        const processedNodes = new Set();
-
-        /*
-         * N/xml puede devolver wrappers distintos para el mismo nodo
-         * entre ejecuciones XPath. Por eso un Set basado sólo en la
-         * identidad del objeto no es suficiente para evitar que el
-         * fallback vuelva a agregar la misma retención.
-         *
-         * Esta colección deduplica por los datos fiscales reales.
-         */
-        const processedTaxKeys = new Set();
-
-
-        // ============================================================
-        // HELPER
-        // Saber si el impuesto pertenece a nivel factura
-        // y no a InvoiceLine
-        // ============================================================
-
-        const isGlobalTaxNode = node => {
-
-            if (!node) {
-                return false;
-            }
-
-            let current =
-                node.parentNode;
-
-            while (current) {
-
-                const localName =
-                    cleanText(
-                        current.localName ||
-                        current.nodeName
-                    ).replace(/^.*:/, '');
-
-
-                // Impuesto de línea: ignorar
-                if (
-                    localName === 'InvoiceLine'
-                ) {
-                    return false;
-                }
-
-
-                // Llegamos al Invoice principal
-                if (
-                    localName === 'Invoice'
-                ) {
-                    return true;
-                }
-
-
-                current =
-                    current.parentNode;
-            }
-
-            return false;
-        };
-
-
-        // ============================================================
-        // HELPER
-        // AGREGAR TAX SUBTOTAL
-        // ============================================================
-
-        const addTaxSubtotal = (
-            subtotalNode,
-            forcedType = ''
-        ) => {
-
-            if (!subtotalNode) {
-                return;
-            }
-
-
-            if (
-                processedNodes.has(
-                    subtotalNode
-                )
-            ) {
-                return;
-            }
-
-
-            processedNodes.add(
-                subtotalNode
-            );
-
-
-            const tax =
-                parseUblTaxSubtotal(
-                    subtotalNode,
-                    forcedType
+            const identificationNode =
+                selectFirst(
+                    document,
+                    partyPath +
+                    `/*[local-name()='PartyIdentification']` +
+                    `/*[local-name()='ID']`
                 );
 
 
-            if (
-                !tax ||
-                !tax.authorityCode
-            ) {
-                return;
-            }
+            const companyIdNode =
+                selectFirst(
+                    document,
+                    partyPath +
+                    `/*[local-name()='PartyTaxScheme']` +
+                    `/*[local-name()='CompanyID']`
+                );
 
 
-            /*
-             * Evitar duplicados semánticos.
-             *
-             * El fallback vuelve a consultar TaxSubtotal mediante otro XPath.
-             * En SuiteScript/N/xml esos nodos pueden no conservar la misma
-             * identidad de objeto, por lo que processedNodes.has(...) puede
-             * fallar aunque sea el mismo nodo XML.
-             */
-            const taxKey = [
-                cleanText(tax.type).toUpperCase(),
-                cleanText(tax.authorityCode).toUpperCase(),
-                Number(toNumber(tax.rate).toFixed(6)),
-                Number(toNumber(tax.taxableAmount).toFixed(6)),
-                Number(toNumber(tax.amount).toFixed(6))
-            ].join('|');
+            const identificationTaxId =
+                nodeText(
+                    identificationNode
+                );
 
 
-            if (
-                processedTaxKeys.has(
-                    taxKey
-                )
-            ) {
-
-                log.debug({
-                    title:
-                        'UBL - Impuesto duplicado omitido',
-
-                    details: {
-                        taxKey,
-                        forcedType,
-                        authorityCode:
-                            tax.authorityCode,
-                        rate:
-                            tax.rate,
-                        taxableAmount:
-                            tax.taxableAmount,
-                        amount:
-                            tax.amount
-                    }
-                });
-
-                return;
-            }
+            const documentTypeCode =
+                cleanText(
+                    getAttributeAny(
+                        identificationNode,
+                        ['schemeID']
+                    ) ||
+                    getAttributeAny(
+                        companyIdNode,
+                        ['schemeName']
+                    )
+                );
 
 
-            processedTaxKeys.add(
-                taxKey
+            const documentTypeName =
+                cleanText(
+                    getAttributeAny(
+                        identificationNode,
+                        ['schemeName']
+                    )
+                );
+
+
+            const taxId =
+                nodeText(companyIdNode) ||
+                firstText(document, [
+                    rootPath + `/*[local-name()='CustomerAssignedAccountID']`
+                ]) ||
+                identificationTaxId;
+
+
+            const legalName =
+                firstText(document, [
+                    partyPath +
+                    `/*[local-name()='PartyLegalEntity']` +
+                    `/*[local-name()='RegistrationName']`,
+
+                    partyPath +
+                    `/*[local-name()='PartyTaxScheme']` +
+                    `/*[local-name()='RegistrationName']`
+                ]);
+
+
+            const commercialName =
+                firstText(document, [
+                    partyPath +
+                    `/*[local-name()='PartyName']` +
+                    `/*[local-name()='Name']`
+                ]) ||
+                legalName;
+
+
+            const verificationDigit =
+                cleanText(
+                    getAttributeAny(
+                        companyIdNode,
+                        ['schemeID']
+                    )
+                );
+
+
+            const addressBasePaths = [
+                partyPath + `/*[local-name()='PostalAddress']`,
+                partyPath +
+                `/*[local-name()='PhysicalLocation']` +
+                `/*[local-name()='Address']`
+            ];
+
+
+            const getAddressText = childPath => {
+                try {
+                    return firstText(
+                        document,
+                        addressBasePaths.map(base =>
+                            base + childPath
+                        )
+                    );
+                } catch (functionError) {
+                    logFunctionError('parseUblParty.getAddressText', functionError);
+                    throw functionError;
+                }
+            };
+
+
+            const countryCode =
+                getAddressText(
+                    `/*[local-name()='Country']` +
+                    `/*[local-name()='IdentificationCode']`
+                );
+
+
+            const countryName =
+                getAddressText(
+                    `/*[local-name()='Country']` +
+                    `/*[local-name()='Name']`
+                );
+
+
+            const stateCode =
+                getAddressText(
+                    `/*[local-name()='CountrySubentityCode']`
+                );
+
+
+            const stateName =
+                getAddressText(
+                    `/*[local-name()='CountrySubentity']`
+                );
+
+
+            const cityCode =
+                getAddressText(
+                    `/*[local-name()='ID']`
+                );
+
+
+            const cityName =
+                getAddressText(
+                    `/*[local-name()='CityName']`
+                );
+
+
+            const postalCode =
+                getAddressText(
+                    `/*[local-name()='PostalZone']`
+                );
+
+
+            const contributorType =
+                firstText(document, [
+                    rootPath +
+                    `/*[local-name()='AdditionalAccountID']`,
+
+                    partyPath +
+                    `/*[local-name()='AdditionalAccountID']`
+                ]);
+
+
+            const fiscalRegime =
+                firstText(document, [
+                    partyPath +
+                    `/*[local-name()='PartyTaxScheme']` +
+                    `/*[local-name()='TaxScheme']` +
+                    `/*[local-name()='Name']`
+                ]);
+
+
+            const fiscalResponsibility =
+                firstText(document, [
+                    partyPath +
+                    `/*[local-name()='PartyTaxScheme']` +
+                    `/*[local-name()='TaxLevelCode']`
+                ]);
+
+
+            const economicActivity =
+                firstText(document, [
+                    partyPath +
+                    `/*[local-name()='PartyLegalEntity']` +
+                    `/*[local-name()='CorporateRegistrationScheme']` +
+                    `/*[local-name()='ID']`,
+
+                    partyPath +
+                    `/*[local-name()='PartyLegalEntity']` +
+                    `/*[local-name()='CorporateRegistrationScheme']` +
+                    `/*[local-name()='Name']`
+                ]);
+
+
+            return {
+                taxId,
+                name:
+                    legalName ||
+                    commercialName,
+
+                legalName,
+                commercialName,
+
+                schemeID:
+                    documentTypeCode,
+
+                documentTypeCode,
+                documentTypeName,
+
+                verificationDigit,
+
+                countryCode,
+                countryName,
+
+                stateCode,
+                stateName,
+
+                cityCode,
+                cityName,
+
+                postalCode,
+
+                contributorType,
+                fiscalRegime,
+                fiscalResponsibility,
+                economicActivity
+            };
+        } catch (functionError) {
+            logFunctionError('parseUblParty', functionError);
+            throw functionError;
+        }
+    };
+
+    const parseUblTaxSubtotal = (subtotalNode, forcedType = '') => {
+        try {
+            const amountNode = selectFirst(
+                subtotalNode,
+                "./*[local-name()='TaxAmount']"
             );
 
+            const percentNode = selectFirst(
+                subtotalNode,
+                ".//*[local-name()='TaxCategory']/*[local-name()='Percent']"
+            );
+
+            const taxableAmountNode = selectFirst(
+                subtotalNode,
+                "./*[local-name()='TaxableAmount']"
+            );
+
+            const idNode = selectFirst(
+                subtotalNode,
+                ".//*[local-name()='TaxCategory']" +
+                "/*[local-name()='TaxScheme']" +
+                "/*[local-name()='ID']"
+            );
+
+            const nameNode = selectFirst(
+                subtotalNode,
+                ".//*[local-name()='TaxCategory']" +
+                "/*[local-name()='TaxScheme']" +
+                "/*[local-name()='Name']"
+            );
+
+            const authorityCode = nodeText(idNode).toUpperCase();
+            const taxName = nodeText(nameNode);
+            const taxAmount = toNumber(nodeText(amountNode));
+            const taxableAmount = toNumber(nodeText(taxableAmountNode));
+            const xmlRate = normalizeTaxRate(nodeText(percentNode), 'UBL');
+
+            // Algunos XML SUNAT informan Percent como 0 o lo omiten a nivel global.
+            // Cuando existe base e importe, se calcula la tasa efectiva.
+            const calculatedRate =
+                (!xmlRate && taxableAmount > 0 && taxAmount > 0)
+                    ? Number(
+                        (
+                            Math.round(
+                                ((taxAmount / taxableAmount) * 100) * 100
+                            ) / 100
+                        ).toFixed(2)
+                    )
+                    : xmlRate;
+
+            let type = forcedType;
+
+            if (!type) {
+                if (['05', '06', '07', 'ZZ', 'RET', 'WITHHOLDING'].includes(authorityCode) ||
+                    /RET|WITHHOLD/i.test(taxName)) {
+                    type = 'WITHHOLDING';
+                } else if (authorityCode === '9997' || /EXONERAD/i.test(taxName)) {
+                    type = 'EXEMPT';
+                } else if (authorityCode === '9998' || /INAFECT/i.test(taxName)) {
+                    type = 'UNAFFECTED';
+                } else if (/DETRACC/i.test(authorityCode) || /DETRACC/i.test(taxName)) {
+                    type = 'DETRACTION';
+                } else {
+                    type = 'TRANSFER';
+                }
+            }
+
+            return {
+                type,
+                authorityCode,
+                name: taxName,
+                rate: calculatedRate,
+                originalRate: nodeText(percentNode),
+                taxableAmount,
+                amount: taxAmount
+            };
+        } catch (functionError) {
+            logFunctionError('parseUblTaxSubtotal', functionError);
+            throw functionError;
+        }
+    };
+
+    const parseUblTaxes = document => {
+        try {
+
+            const taxes = [];
+
+            const processedNodes = new Set();
 
             /*
-             * Colombia:
+             * N/xml puede devolver wrappers distintos para el mismo nodo
+             * entre ejecuciones XPath. Por eso un Set basado sólo en la
+             * identidad del objeto no es suficiente para evitar que el
+             * fallback vuelva a agregar la misma retención.
              *
-             * 05 = ReteIVA
-             * 06 = ReteRenta
-             * 07 = ReteICA
-             *
-             * Aunque algunos XML los coloquen en TaxTotal,
-             * se consideran retenciones.
+             * Esta colección deduplica por los datos fiscales reales.
              */
-            if (
-                ['05', '06', '07', 'ZZ'].includes(
-                    tax.authorityCode
-                )
-            ) {
+            const processedTaxKeys = new Set();
 
-                tax.type =
-                    'WITHHOLDING';
-            }
+
+            // ============================================================
+            // HELPER
+            // Saber si el impuesto pertenece a nivel factura
+            // y no a InvoiceLine
+            // ============================================================
+
+            const isGlobalTaxNode = node => {
+                try {
+
+                    if (!node) {
+                        return false;
+                    }
+
+                    let current =
+                        node.parentNode;
+
+                    while (current) {
+
+                        const localName =
+                            cleanText(
+                                current.localName ||
+                                current.nodeName
+                            ).replace(/^.*:/, '');
+
+
+                        // Impuesto de línea: ignorar
+                        if (
+                            localName === 'InvoiceLine'
+                        ) {
+                            return false;
+                        }
+
+
+                        // Llegamos al Invoice principal
+                        if (
+                            localName === 'Invoice'
+                        ) {
+                            return true;
+                        }
+
+
+                        current =
+                            current.parentNode;
+                    }
+
+                    return false;
+                } catch (functionError) {
+                    logFunctionError('parseUblTaxes.isGlobalTaxNode', functionError);
+                    throw functionError;
+                }
+            };
+
+
+            // ============================================================
+            // HELPER
+            // AGREGAR TAX SUBTOTAL
+            // ============================================================
+
+            const addTaxSubtotal = (
+                subtotalNode,
+                forcedType = ''
+            ) => {
+                try {
+
+                    if (!subtotalNode) {
+                        return;
+                    }
+
+
+                    if (
+                        processedNodes.has(
+                            subtotalNode
+                        )
+                    ) {
+                        return;
+                    }
+
+
+                    processedNodes.add(
+                        subtotalNode
+                    );
+
+
+                    const tax =
+                        parseUblTaxSubtotal(
+                            subtotalNode,
+                            forcedType
+                        );
+
+
+                    if (
+                        !tax ||
+                        !tax.authorityCode
+                    ) {
+                        return;
+                    }
+
+
+                    /*
+                     * Evitar duplicados semánticos.
+                     *
+                     * El fallback vuelve a consultar TaxSubtotal mediante otro XPath.
+                     * En SuiteScript/N/xml esos nodos pueden no conservar la misma
+                     * identidad de objeto, por lo que processedNodes.has(...) puede
+                     * fallar aunque sea el mismo nodo XML.
+                     */
+                    const taxKey = [
+                        cleanText(tax.type).toUpperCase(),
+                        cleanText(tax.authorityCode).toUpperCase(),
+                        Number(toNumber(tax.rate).toFixed(6)),
+                        Number(toNumber(tax.taxableAmount).toFixed(6)),
+                        Number(toNumber(tax.amount).toFixed(6))
+                    ].join('|');
+
+
+                    if (
+                        processedTaxKeys.has(
+                            taxKey
+                        )
+                    ) {
+
+                        log.debug({
+                            title:
+                                'UBL - Impuesto duplicado omitido',
+
+                            details: {
+                                taxKey,
+                                forcedType,
+                                authorityCode:
+                                    tax.authorityCode,
+                                rate:
+                                    tax.rate,
+                                taxableAmount:
+                                    tax.taxableAmount,
+                                amount:
+                                    tax.amount
+                            }
+                        });
+
+                        return;
+                    }
+
+
+                    processedTaxKeys.add(
+                        taxKey
+                    );
+
+
+                    /*
+                     * Colombia:
+                     *
+                     * 05 = ReteIVA
+                     * 06 = ReteRenta
+                     * 07 = ReteICA
+                     *
+                     * Aunque algunos XML los coloquen en TaxTotal,
+                     * se consideran retenciones.
+                     */
+                    if (
+                        ['05', '06', '07', 'ZZ'].includes(
+                            tax.authorityCode
+                        )
+                    ) {
+
+                        tax.type =
+                            'WITHHOLDING';
+                    }
+
+
+                    log.audit({
+                        title:
+                            'UBL - Impuesto detectado',
+
+                        details: {
+                            type:
+                                tax.type,
+
+                            authorityCode:
+                                tax.authorityCode,
+
+                            name:
+                                tax.name,
+
+                            rate:
+                                tax.rate,
+
+                            originalRate:
+                                tax.originalRate,
+
+                            taxableAmount:
+                                tax.taxableAmount,
+
+                            amount:
+                                tax.amount
+                        }
+                    });
+
+
+                    taxes.push(
+                        tax
+                    );
+                } catch (functionError) {
+                    logFunctionError('parseUblTaxes.addTaxSubtotal', functionError);
+                    throw functionError;
+                }
+            };
+
+
+            // ============================================================
+            // 1. TAX TOTAL
+            // ============================================================
+
+            const taxTotals =
+                selectNodes(
+                    document,
+                    "//*[local-name()='TaxTotal']"
+                );
 
 
             log.audit({
                 title:
-                    'UBL - Impuesto detectado',
+                    'UBL - TaxTotal encontrados',
 
                 details: {
-                    type:
-                        tax.type,
-
-                    authorityCode:
-                        tax.authorityCode,
-
-                    name:
-                        tax.name,
-
-                    rate:
-                        tax.rate,
-
-                    originalRate:
-                        tax.originalRate,
-
-                    taxableAmount:
-                        tax.taxableAmount,
-
-                    amount:
-                        tax.amount
+                    cantidad:
+                        taxTotals.length
                 }
             });
 
 
-            taxes.push(
-                tax
-            );
-        };
+            taxTotals.forEach(
+                taxTotal => {
+
+                    if (
+                        !isGlobalTaxNode(
+                            taxTotal
+                        )
+                    ) {
+                        return;
+                    }
 
 
-        // ============================================================
-        // 1. TAX TOTAL
-        // ============================================================
-
-        const taxTotals =
-            selectNodes(
-                document,
-                "//*[local-name()='TaxTotal']"
-            );
+                    const subtotals =
+                        selectNodes(
+                            taxTotal,
+                            "./*[local-name()='TaxSubtotal']"
+                        );
 
 
-        log.audit({
-            title:
-                'UBL - TaxTotal encontrados',
+                    subtotals.forEach(
+                        subtotal => {
 
-            details: {
-                cantidad:
-                    taxTotals.length
-            }
-        });
-
-
-        taxTotals.forEach(
-            taxTotal => {
-
-                if (
-                    !isGlobalTaxNode(
-                        taxTotal
-                    )
-                ) {
-                    return;
-                }
-
-
-                const subtotals =
-                    selectNodes(
-                        taxTotal,
-                        "./*[local-name()='TaxSubtotal']"
+                            addTaxSubtotal(
+                                subtotal
+                            );
+                        }
                     );
+                }
+            );
 
 
-                subtotals.forEach(
-                    subtotal => {
+            // ============================================================
+            // 2. WITHHOLDING TAX TOTAL
+            // ============================================================
 
-                        addTaxSubtotal(
+            const withholdingTotals =
+                selectNodes(
+                    document,
+                    "//*[local-name()='WithholdingTaxTotal']"
+                );
+
+
+            log.audit({
+                title:
+                    'UBL - WithholdingTaxTotal encontrados',
+
+                details: {
+                    cantidad:
+                        withholdingTotals.length
+                }
+            });
+
+
+            withholdingTotals.forEach(
+                withholdingTotal => {
+
+                    if (
+                        !isGlobalTaxNode(
+                            withholdingTotal
+                        )
+                    ) {
+                        return;
+                    }
+
+
+                    const subtotals =
+                        selectNodes(
+                            withholdingTotal,
+                            "./*[local-name()='TaxSubtotal']"
+                        );
+
+
+                    subtotals.forEach(
+                        subtotal => {
+
+                            addTaxSubtotal(
+                                subtotal,
+                                'WITHHOLDING'
+                            );
+                        }
+                    );
+                }
+            );
+
+
+            // ============================================================
+            // 3. FALLBACK PARA RETENCIONES
+            //
+            // Algunos XML no colocan la retención exactamente donde
+            // esperamos. Buscamos todos los TaxSubtotal fuera de líneas.
+            // ============================================================
+
+            const allSubtotals =
+                selectNodes(
+                    document,
+                    "//*[local-name()='TaxSubtotal']"
+                );
+
+
+            allSubtotals.forEach(
+                subtotal => {
+
+                    if (
+                        processedNodes.has(
+                            subtotal
+                        )
+                    ) {
+                        return;
+                    }
+
+
+                    if (
+                        !isGlobalTaxNode(
+                            subtotal
+                        )
+                    ) {
+                        return;
+                    }
+
+
+                    const candidate =
+                        parseUblTaxSubtotal(
                             subtotal
                         );
+
+
+                    if (!candidate) {
+                        return;
                     }
-                );
-            }
-        );
 
 
-        // ============================================================
-        // 2. WITHHOLDING TAX TOTAL
-        // ============================================================
+                    const code =
+                        cleanText(
+                            candidate.authorityCode
+                        ).toUpperCase();
 
-        const withholdingTotals =
-            selectNodes(
-                document,
-                "//*[local-name()='WithholdingTaxTotal']"
+
+                    const name =
+                        cleanText(
+                            candidate.name
+                        ).toUpperCase();
+
+
+                    const isRetention =
+                        ['05', '06', '07', 'ZZ'].includes(
+                            code
+                        ) ||
+                        /RETE|RETENC|WITHHOLD/.test(
+                            name
+                        );
+
+
+                    if (!isRetention) {
+                        return;
+                    }
+
+
+                    addTaxSubtotal(
+                        subtotal,
+                        'WITHHOLDING'
+                    );
+                }
             );
 
 
-        log.audit({
-            title:
-                'UBL - WithholdingTaxTotal encontrados',
+            // ============================================================
+            // 4. DIAGNÓSTICO
+            // ============================================================
 
-            details: {
-                cantidad:
-                    withholdingTotals.length
-            }
-        });
-
-
-        withholdingTotals.forEach(
-            withholdingTotal => {
-
-                if (
-                    !isGlobalTaxNode(
-                        withholdingTotal
-                    )
-                ) {
-                    return;
-                }
+            const taxSchemeIds =
+                selectNodes(
+                    document,
+                    "//*[local-name()='TaxScheme']" +
+                    "/*[local-name()='ID']"
+                );
 
 
-                const subtotals =
-                    selectNodes(
-                        withholdingTotal,
-                        "./*[local-name()='TaxSubtotal']"
-                    );
+            const retentionCodes =
+                [];
 
 
-                subtotals.forEach(
-                    subtotal => {
+            taxSchemeIds.forEach(
+                node => {
 
-                        addTaxSubtotal(
-                            subtotal,
-                            'WITHHOLDING'
+                    const code =
+                        nodeText(node)
+                            .toUpperCase();
+
+
+                    if (
+                        ['05', '06', '07'].includes(
+                            code
+                        )
+                    ) {
+
+                        retentionCodes.push(
+                            code
                         );
                     }
-                );
-            }
-        );
-
-
-        // ============================================================
-        // 3. FALLBACK PARA RETENCIONES
-        //
-        // Algunos XML no colocan la retención exactamente donde
-        // esperamos. Buscamos todos los TaxSubtotal fuera de líneas.
-        // ============================================================
-
-        const allSubtotals =
-            selectNodes(
-                document,
-                "//*[local-name()='TaxSubtotal']"
+                }
             );
 
 
-        allSubtotals.forEach(
-            subtotal => {
+            log.audit({
+                title:
+                    'UBL - Códigos de retención encontrados',
 
-                if (
-                    processedNodes.has(
-                        subtotal
-                    )
-                ) {
-                    return;
+                details: {
+                    codes:
+                        retentionCodes
                 }
+            });
 
 
-                if (
-                    !isGlobalTaxNode(
-                        subtotal
-                    )
-                ) {
-                    return;
-                }
+            log.audit({
+                title:
+                    'UBL - Impuestos finales XML',
+
+                details:
+                    taxes
+            });
 
 
-                const candidate =
-                    parseUblTaxSubtotal(
-                        subtotal
-                    );
-
-
-                if (!candidate) {
-                    return;
-                }
-
-
-                const code =
-                    cleanText(
-                        candidate.authorityCode
-                    ).toUpperCase();
-
-
-                const name =
-                    cleanText(
-                        candidate.name
-                    ).toUpperCase();
-
-
-                const isRetention =
-                    ['05', '06', '07', 'ZZ'].includes(
-                        code
-                    ) ||
-                    /RETE|RETENC|WITHHOLD/.test(
-                        name
-                    );
-
-
-                if (!isRetention) {
-                    return;
-                }
-
-
-                addTaxSubtotal(
-                    subtotal,
-                    'WITHHOLDING'
-                );
-            }
-        );
-
-
-        // ============================================================
-        // 4. DIAGNÓSTICO
-        // ============================================================
-
-        const taxSchemeIds =
-            selectNodes(
-                document,
-                "//*[local-name()='TaxScheme']" +
-                "/*[local-name()='ID']"
-            );
-
-
-        const retentionCodes =
-            [];
-
-
-        taxSchemeIds.forEach(
-            node => {
-
-                const code =
-                    nodeText(node)
-                        .toUpperCase();
-
-
-                if (
-                    ['05', '06', '07'].includes(
-                        code
-                    )
-                ) {
-
-                    retentionCodes.push(
-                        code
-                    );
-                }
-            }
-        );
-
-
-        log.audit({
-            title:
-                'UBL - Códigos de retención encontrados',
-
-            details: {
-                codes:
-                    retentionCodes
-            }
-        });
-
-
-        log.audit({
-            title:
-                'UBL - Impuestos finales XML',
-
-            details:
-                taxes
-        });
-
-
-        return taxes;
+            return taxes;
+        } catch (functionError) {
+            logFunctionError('parseUblTaxes', functionError);
+            throw functionError;
+        }
     };
 
     /**
@@ -3030,221 +3245,236 @@ define([
      * no dentro de TaxTotal.
      */
     const parsePeruDetraction = document => {
-        const paymentTerms = selectNodes(
-            document,
-            "/*[local-name()='Invoice']/*[local-name()='PaymentTerms']"
-        );
+        try {
+            const paymentTerms = selectNodes(
+                document,
+                "/*[local-name()='Invoice']/*[local-name()='PaymentTerms']"
+            );
 
-        for (const node of paymentTerms) {
-            const id = firstText(node, [
-                "./*[local-name()='ID']"
-            ]).toUpperCase();
+            for (const node of paymentTerms) {
+                const id = firstText(node, [
+                    "./*[local-name()='ID']"
+                ]).toUpperCase();
 
-            const paymentMeansId = firstText(node, [
-                "./*[local-name()='PaymentMeansID']"
-            ]);
+                const paymentMeansId = firstText(node, [
+                    "./*[local-name()='PaymentMeansID']"
+                ]);
 
-            const percent = firstText(node, [
-                "./*[local-name()='PaymentPercent']"
-            ]);
+                const percent = firstText(node, [
+                    "./*[local-name()='PaymentPercent']"
+                ]);
 
-            const amount = firstText(node, [
-                "./*[local-name()='Amount']"
-            ]);
+                const amount = firstText(node, [
+                    "./*[local-name()='Amount']"
+                ]);
 
-            if (
-                id.includes('DETRACC') ||
-                paymentMeansId.includes('DETRACC') ||
-                (percent && amount && id === 'FORMA_PAGO')
-            ) {
-                return {
-                    type: 'DETRACTION',
-                    authorityCode: 'DETRACCION',
-                    name: 'DETRACCIÓN',
-                    rate: percent,
-                    amount
-                };
+                if (
+                    id.includes('DETRACC') ||
+                    paymentMeansId.includes('DETRACC') ||
+                    (percent && amount && id === 'FORMA_PAGO')
+                ) {
+                    return {
+                        type: 'DETRACTION',
+                        authorityCode: 'DETRACCION',
+                        name: 'DETRACCIÓN',
+                        rate: percent,
+                        amount
+                    };
+                }
             }
-        }
 
-        return null;
+            return null;
+        } catch (functionError) {
+            logFunctionError('parsePeruDetraction', functionError);
+            throw functionError;
+        }
     };
 
     const parsePeru = document => {
-        const supplier = parseUblParty(document, 'supplier');
-        const customer = parseUblParty(document, 'customer');
+        try {
+            const supplier = parseUblParty(document, 'supplier');
+            const customer = parseUblParty(document, 'customer');
 
-        const seriesNumber = firstText(document, [
-            "/*[local-name()='Invoice']/*[local-name()='ID']"
-        ]);
+            const seriesNumber = firstText(document, [
+                "/*[local-name()='Invoice']/*[local-name()='ID']"
+            ]);
 
-        const uuid = firstText(document, [
-            "/*[local-name()='Invoice']/*[local-name()='UUID']"
-        ]);
+            const uuid = firstText(document, [
+                "/*[local-name()='Invoice']/*[local-name()='UUID']"
+            ]);
 
-        return {
-            countryCode: 'PE',
-            countryName: CONFIG.COUNTRY.PE.name,
-            documentId: uuid || seriesNumber,
-            documentNumber: seriesNumber || uuid,
-            issueDate: firstText(document, ["/*[local-name()='Invoice']/*[local-name()='IssueDate']"]),
-            currencyCode: firstText(document, ["/*[local-name()='Invoice']/*[local-name()='DocumentCurrencyCode']"]),
-            subtotal: toNumber(firstText(document, [
-                "//*[local-name()='LegalMonetaryTotal']/*[local-name()='LineExtensionAmount']",
-                "//*[local-name()='LegalMonetaryTotal']/*[local-name()='TaxExclusiveAmount']"
-            ])),
-            total: toNumber(firstText(document, [
-                "//*[local-name()='LegalMonetaryTotal']/*[local-name()='PayableAmount']",
-                "//*[local-name()='LegalMonetaryTotal']/*[local-name()='TaxInclusiveAmount']"
-            ])),
-            schemeID:
-                supplier.schemeID,
-            supplierTaxId: supplier.taxId,
-            supplierName: supplier.name,
-            customerTaxId: customer.taxId,
-            supplierDocumentTypeCode:
-                supplier.documentTypeCode,
-            taxes: (() => {
-                const taxes = parseUblTaxes(document);
-                const detraction = parsePeruDetraction(document);
-                if (detraction) taxes.push(detraction);
-                return taxes;
-            })()
-        };
+            return {
+                countryCode: 'PE',
+                countryName: CONFIG.COUNTRY.PE.name,
+                documentId: uuid || seriesNumber,
+                documentNumber: seriesNumber || uuid,
+                issueDate: firstText(document, ["/*[local-name()='Invoice']/*[local-name()='IssueDate']"]),
+                currencyCode: firstText(document, ["/*[local-name()='Invoice']/*[local-name()='DocumentCurrencyCode']"]),
+                subtotal: toNumber(firstText(document, [
+                    "//*[local-name()='LegalMonetaryTotal']/*[local-name()='LineExtensionAmount']",
+                    "//*[local-name()='LegalMonetaryTotal']/*[local-name()='TaxExclusiveAmount']"
+                ])),
+                total: toNumber(firstText(document, [
+                    "//*[local-name()='LegalMonetaryTotal']/*[local-name()='PayableAmount']",
+                    "//*[local-name()='LegalMonetaryTotal']/*[local-name()='TaxInclusiveAmount']"
+                ])),
+                schemeID:
+                    supplier.schemeID,
+                supplierTaxId: supplier.taxId,
+                supplierName: supplier.name,
+                customerTaxId: customer.taxId,
+                supplierDocumentTypeCode:
+                    supplier.documentTypeCode,
+                taxes: (() => {
+                    const taxes = parseUblTaxes(document);
+                    const detraction = parsePeruDetraction(document);
+                    if (detraction) taxes.push(detraction);
+                    return taxes;
+                })()
+            };
+        } catch (functionError) {
+            logFunctionError('parsePeru', functionError);
+            throw functionError;
+        }
     };
 
     const parseColombia = document => {
-        const supplier = parseUblParty(document, 'supplier');
-        const customer = parseUblParty(document, 'customer');
+        try {
+            const supplier = parseUblParty(document, 'supplier');
+            const customer = parseUblParty(document, 'customer');
 
-        const invoiceNumber = firstText(document, [
-            "/*[local-name()='Invoice']/*[local-name()='ID']"
-        ]);
+            const invoiceNumber = firstText(document, [
+                "/*[local-name()='Invoice']/*[local-name()='ID']"
+            ]);
 
-        const cufe = firstText(document, [
-            "/*[local-name()='Invoice']/*[local-name()='UUID']",
-            "//*[local-name()='DianExtensions']//*[local-name()='UUID']"
-        ]);
+            const cufe = firstText(document, [
+                "/*[local-name()='Invoice']/*[local-name()='UUID']",
+                "//*[local-name()='DianExtensions']//*[local-name()='UUID']"
+            ]);
 
-        return {
-            countryCode: 'CO',
-            countryName: CONFIG.COUNTRY.CO.name,
-            documentId: cufe || invoiceNumber,
-            documentNumber: invoiceNumber || cufe,
-            issueDate: firstText(document, ["/*[local-name()='Invoice']/*[local-name()='IssueDate']"]),
-            currencyCode: firstText(document, ["/*[local-name()='Invoice']/*[local-name()='DocumentCurrencyCode']"]),
-            subtotal: toNumber(firstText(document, [
-                "//*[local-name()='LegalMonetaryTotal']/*[local-name()='LineExtensionAmount']",
-                "//*[local-name()='LegalMonetaryTotal']/*[local-name()='TaxExclusiveAmount']"
-            ])),
-            total: toNumber(firstText(document, [
-                "//*[local-name()='LegalMonetaryTotal']/*[local-name()='PayableAmount']",
-                "//*[local-name()='LegalMonetaryTotal']/*[local-name()='TaxInclusiveAmount']"
-            ])),
-            supplierTaxId: supplier.taxId,
-            supplierName: supplier.name,
-            customerTaxId: customer.taxId,
+            return {
+                countryCode: 'CO',
+                countryName: CONFIG.COUNTRY.CO.name,
+                documentId: cufe || invoiceNumber,
+                documentNumber: invoiceNumber || cufe,
+                issueDate: firstText(document, ["/*[local-name()='Invoice']/*[local-name()='IssueDate']"]),
+                currencyCode: firstText(document, ["/*[local-name()='Invoice']/*[local-name()='DocumentCurrencyCode']"]),
+                subtotal: toNumber(firstText(document, [
+                    "//*[local-name()='LegalMonetaryTotal']/*[local-name()='LineExtensionAmount']",
+                    "//*[local-name()='LegalMonetaryTotal']/*[local-name()='TaxExclusiveAmount']"
+                ])),
+                total: toNumber(firstText(document, [
+                    "//*[local-name()='LegalMonetaryTotal']/*[local-name()='PayableAmount']",
+                    "//*[local-name()='LegalMonetaryTotal']/*[local-name()='TaxInclusiveAmount']"
+                ])),
+                supplierTaxId: supplier.taxId,
+                supplierName: supplier.name,
+                customerTaxId: customer.taxId,
 
-            supplierLegalName:
-                supplier.legalName,
+                supplierLegalName:
+                    supplier.legalName,
 
-            supplierCommercialName:
-                supplier.commercialName,
+                supplierCommercialName:
+                    supplier.commercialName,
 
-            supplierDocumentTypeCode:
-                supplier.documentTypeCode,
+                supplierDocumentTypeCode:
+                    supplier.documentTypeCode,
 
-            supplierDocumentTypeName:
-                supplier.documentTypeName,
+                supplierDocumentTypeName:
+                    supplier.documentTypeName,
 
-            supplierVerificationDigit:
-                supplier.verificationDigit,
+                supplierVerificationDigit:
+                    supplier.verificationDigit,
 
-            supplierCountryCode:
-                supplier.countryCode,
+                supplierCountryCode:
+                    supplier.countryCode,
 
-            supplierCountryName:
-                supplier.countryName,
+                supplierCountryName:
+                    supplier.countryName,
 
-            supplierStateCode:
-                supplier.stateCode,
+                supplierStateCode:
+                    supplier.stateCode,
 
-            supplierStateName:
-                supplier.stateName,
+                supplierStateName:
+                    supplier.stateName,
 
-            supplierCityCode:
-                supplier.cityCode,
+                supplierCityCode:
+                    supplier.cityCode,
 
-            supplierCityName:
-                supplier.cityName,
+                supplierCityName:
+                    supplier.cityName,
 
-            supplierPostalCode:
-                supplier.postalCode,
+                supplierPostalCode:
+                    supplier.postalCode,
 
-            supplierContributorType:
-                supplier.contributorType,
+                supplierContributorType:
+                    supplier.contributorType,
 
-            supplierFiscalRegime:
-                supplier.fiscalRegime,
+                supplierFiscalRegime:
+                    supplier.fiscalRegime,
 
-            supplierFiscalResponsibility:
-                supplier.fiscalResponsibility,
+                supplierFiscalResponsibility:
+                    supplier.fiscalResponsibility,
 
-            supplierEconomicActivity:
-                supplier.economicActivity,
+                supplierEconomicActivity:
+                    supplier.economicActivity,
 
-            /*
-             * Regla Colombia:
-             * ZZ: Otros tributos, tasas, contribuciones y similares
-             * NO se toma automáticamente del XML.
-             *
-             * Si realmente se requiere un impuesto adicional, el usuario
-             * puede agregarlo manualmente desde la interfaz.
-             */
-            taxes:
-                parseUblTaxes(document)
-                    .filter(tax => {
+                /*
+                 * Regla Colombia:
+                 * ZZ: Otros tributos, tasas, contribuciones y similares
+                 * NO se toma automáticamente del XML.
+                 *
+                 * Si realmente se requiere un impuesto adicional, el usuario
+                 * puede agregarlo manualmente desde la interfaz.
+                 */
+                taxes:
+                    parseUblTaxes(document)
+                        .filter(tax => {
 
-                        const authorityCode =
-                            cleanText(
-                                tax.authorityCode
-                            ).toUpperCase();
-
-
-                        if (
-                            authorityCode ===
-                            'ZZ'
-                        ) {
-
-                            log.audit({
-                                title:
-                                    'Colombia - impuesto ZZ omitido',
-
-                                details: {
-                                    authorityCode:
-                                        tax.authorityCode,
-
-                                    name:
-                                        tax.name,
-
-                                    rate:
-                                        tax.rate,
-
-                                    amount:
-                                        tax.amount,
-
-                                    taxableAmount:
-                                        tax.taxableAmount
-                                }
-                            });
-
-                            return false;
-                        }
+                            const authorityCode =
+                                cleanText(
+                                    tax.authorityCode
+                                ).toUpperCase();
 
 
-                        return true;
-                    })
-        };
+                            if (
+                                authorityCode ===
+                                'ZZ'
+                            ) {
+
+                                log.audit({
+                                    title:
+                                        'Colombia - impuesto ZZ omitido',
+
+                                    details: {
+                                        authorityCode:
+                                            tax.authorityCode,
+
+                                        name:
+                                            tax.name,
+
+                                        rate:
+                                            tax.rate,
+
+                                        amount:
+                                            tax.amount,
+
+                                        taxableAmount:
+                                            tax.taxableAmount
+                                    }
+                                });
+
+                                return false;
+                            }
+
+
+                            return true;
+                        })
+            };
+        } catch (functionError) {
+            logFunctionError('parseColombia', functionError);
+            throw functionError;
+        }
     };
 
     const COUNTRY_ADAPTERS = {
@@ -3254,85 +3484,90 @@ define([
     };
 
     const detectCountry = document => {
+        try {
 
-        const root = document?.documentElement;
+            const root = document?.documentElement;
 
-        const rootName = cleanText(
-            root?.localName ||
-            root?.nodeName
-        ).replace(/^.*:/, '');
+            const rootName = cleanText(
+                root?.localName ||
+                root?.nodeName
+            ).replace(/^.*:/, '');
 
-        const namespace = cleanText(
-            root?.namespaceURI
-        ).toLowerCase();
+            const namespace = cleanText(
+                root?.namespaceURI
+            ).toLowerCase();
 
-        const customizationId = firstText(document, [
-            "/*[local-name()='Invoice']/*[local-name()='CustomizationID']"
-        ]).toUpperCase();
+            const customizationId = firstText(document, [
+                "/*[local-name()='Invoice']/*[local-name()='CustomizationID']"
+            ]).toUpperCase();
 
-        const profileId = firstText(document, [
-            "/*[local-name()='Invoice']/*[local-name()='ProfileID']"
-        ]).toUpperCase();
+            const profileId = firstText(document, [
+                "/*[local-name()='Invoice']/*[local-name()='ProfileID']"
+            ]).toUpperCase();
 
-        const countryCode = firstText(document, [
-            "//*[local-name()='DianExtensions']" +
-            "//*[local-name()='InvoiceSource']" +
-            "/*[local-name()='IdentificationCode']",
+            const countryCode = firstText(document, [
+                "//*[local-name()='DianExtensions']" +
+                "//*[local-name()='InvoiceSource']" +
+                "/*[local-name()='IdentificationCode']",
 
-            "//*[local-name()='AccountingSupplierParty']" +
-            "//*[local-name()='Country']" +
-            "/*[local-name()='IdentificationCode']"
-        ]).toUpperCase();
+                "//*[local-name()='AccountingSupplierParty']" +
+                "//*[local-name()='Country']" +
+                "/*[local-name()='IdentificationCode']"
+            ]).toUpperCase();
 
-        // México
-        if (
-            rootName === 'Comprobante' ||
-            namespace.includes('sat.gob.mx')
-        ) {
-            return 'MX';
-        }
+            // México
+            if (
+                rootName === 'Comprobante' ||
+                namespace.includes('sat.gob.mx')
+            ) {
+                return 'MX';
+            }
 
-        // Colombia
-        if (
-            rootName === 'AttachedDocument' ||
-            customizationId.includes('DIAN') ||
-            profileId.includes('DIAN') ||
-            namespace.includes('dian.gov.co') ||
-            namespace.includes('dian:gov:co') ||
-            countryCode === 'CO'
-        ) {
-            return 'CO';
-        }
+            // Colombia
+            if (
+                rootName === 'AttachedDocument' ||
+                customizationId.includes('DIAN') ||
+                profileId.includes('DIAN') ||
+                namespace.includes('dian.gov.co') ||
+                namespace.includes('dian:gov:co') ||
+                countryCode === 'CO'
+            ) {
+                return 'CO';
+            }
 
-        // Perú
-        if (
-            rootName === 'Invoice' &&
-            (
-                customizationId.includes('SUNAT') ||
-                profileId.includes('SUNAT') ||
-                countryCode === 'PE'
-            )
-        ) {
-            return 'PE';
-        }
-
-        /*
-         * Último recurso para UBL:
-         * el RUC peruano normalmente tiene 11 dígitos.
-         */
-        if (rootName === 'Invoice') {
-
-            const supplierTaxId =
-                parseUblParty(document, 'supplier').taxId;
-
-            if (/^\d{11}$/.test(normalizeTaxId(supplierTaxId))) {
+            // Perú
+            if (
+                rootName === 'Invoice' &&
+                (
+                    customizationId.includes('SUNAT') ||
+                    profileId.includes('SUNAT') ||
+                    countryCode === 'PE'
+                )
+            ) {
                 return 'PE';
             }
-        }
 
-        throw new Error(
-            `No se pudo identificar el XML. Nodo raíz detectado: ${rootName || 'desconocido'}.`
-        );
+            /*
+             * Último recurso para UBL:
+             * el RUC peruano normalmente tiene 11 dígitos.
+             */
+            if (rootName === 'Invoice') {
+
+                const supplierTaxId =
+                    parseUblParty(document, 'supplier').taxId;
+
+                if (/^\d{11}$/.test(normalizeTaxId(supplierTaxId))) {
+                    return 'PE';
+                }
+            }
+
+            throw new Error(
+                `No se pudo identificar el XML. Nodo raíz detectado: ${rootName || 'desconocido'}.`
+            );
+        } catch (functionError) {
+            logFunctionError('detectCountry', functionError);
+            throw functionError;
+        }
     };
 
     /**
@@ -3340,253 +3575,263 @@ define([
  * extrae la factura Invoice que está dentro del CDATA.
  */
     const unwrapElectronicInvoice = xmlText => {
+        try {
 
-        const originalText = cleanText(xmlText);
+            const originalText = cleanText(xmlText);
 
-        if (!originalText) {
-            throw new Error('El XML está vacío.');
-        }
+            if (!originalText) {
+                throw new Error('El XML está vacío.');
+            }
 
-        /*
-         * Algunos archivos copiados desde navegador incluyen esta frase
-         * antes del XML. La eliminamos si existe.
-         */
-        const sanitizedText = originalText.replace(
-            /^This XML file does not appear to have any style information associated with it\.\s*The document tree is shown below\.\s*/i,
-            ''
-        );
-
-        const outerDocument = xml.Parser.fromString({
-            text: sanitizedText
-        });
-
-        const root = outerDocument?.documentElement;
-
-        const rootName = cleanText(
-            root?.localName ||
-            root?.nodeName
-        ).replace(/^.*:/, '');
-
-        /*
-         * México, Perú o Colombia con Invoice directo.
-         */
-        if (
-            rootName === 'Comprobante' ||
-            rootName === 'Invoice'
-        ) {
-            return {
-                xmlText: sanitizedText,
-                document: outerDocument,
-                wasWrapped: false
-            };
-        }
-
-        /*
-         * Colombia DIAN puede entregar AttachedDocument.
-         */
-        if (rootName !== 'AttachedDocument') {
-            return {
-                xmlText: sanitizedText,
-                document: outerDocument,
-                wasWrapped: false
-            };
-        }
-
-        const descriptionNodes = selectNodes(
-            outerDocument,
-            "//*[local-name()='Attachment']" +
-            "/*[local-name()='ExternalReference']" +
-            "/*[local-name()='Description']"
-        );
-
-        for (const descriptionNode of descriptionNodes) {
-
-            let embeddedXml = cleanText(
-                descriptionNode.textContent ||
-                descriptionNode.text ||
+            /*
+             * Algunos archivos copiados desde navegador incluyen esta frase
+             * antes del XML. La eliminamos si existe.
+             */
+            const sanitizedText = originalText.replace(
+                /^This XML file does not appear to have any style information associated with it\.\s*The document tree is shown below\.\s*/i,
                 ''
             );
 
-            if (!embeddedXml) {
-                continue;
-            }
-
-            /*
-             * Buscamos específicamente el XML Invoice.
-             * El AttachedDocument también puede contener
-             * un ApplicationResponse.
-             */
-            const invoiceStart = embeddedXml.search(
-                /<(?:(?:\w+):)?Invoice(?:\s|>)/i
-            );
-
-            if (invoiceStart < 0) {
-                continue;
-            }
-
-            embeddedXml = embeddedXml.substring(invoiceStart);
-
-            const invoiceEndMatch = embeddedXml.match(
-                /<\/(?:(?:\w+):)?Invoice\s*>/i
-            );
-
-            if (!invoiceEndMatch) {
-                continue;
-            }
-
-            embeddedXml = embeddedXml.substring(
-                0,
-                invoiceEndMatch.index +
-                invoiceEndMatch[0].length
-            );
-
-            /*
-             * Por si el contenido fue escapado como &lt;Invoice&gt;.
-             */
-            embeddedXml = embeddedXml
-                .replace(/&lt;/g, '<')
-                .replace(/&gt;/g, '>')
-                .replace(/&quot;/g, '"')
-                .replace(/&apos;/g, "'")
-                .replace(/&amp;/g, '&');
-
-            const invoiceDocument = xml.Parser.fromString({
-                text: embeddedXml
+            const outerDocument = xml.Parser.fromString({
+                text: sanitizedText
             });
 
-            const invoiceRootName = cleanText(
-                invoiceDocument?.documentElement?.localName ||
-                invoiceDocument?.documentElement?.nodeName
+            const root = outerDocument?.documentElement;
+
+            const rootName = cleanText(
+                root?.localName ||
+                root?.nodeName
             ).replace(/^.*:/, '');
 
-            if (invoiceRootName === 'Invoice') {
+            /*
+             * México, Perú o Colombia con Invoice directo.
+             */
+            if (
+                rootName === 'Comprobante' ||
+                rootName === 'Invoice'
+            ) {
                 return {
-                    xmlText: embeddedXml,
-                    document: invoiceDocument,
-                    wasWrapped: true
+                    xmlText: sanitizedText,
+                    document: outerDocument,
+                    wasWrapped: false
                 };
             }
-        }
 
-        throw new Error(
-            'El archivo es un AttachedDocument de Colombia, pero no se encontró la factura Invoice dentro del adjunto.'
-        );
+            /*
+             * Colombia DIAN puede entregar AttachedDocument.
+             */
+            if (rootName !== 'AttachedDocument') {
+                return {
+                    xmlText: sanitizedText,
+                    document: outerDocument,
+                    wasWrapped: false
+                };
+            }
+
+            const descriptionNodes = selectNodes(
+                outerDocument,
+                "//*[local-name()='Attachment']" +
+                "/*[local-name()='ExternalReference']" +
+                "/*[local-name()='Description']"
+            );
+
+            for (const descriptionNode of descriptionNodes) {
+
+                let embeddedXml = cleanText(
+                    descriptionNode.textContent ||
+                    descriptionNode.text ||
+                    ''
+                );
+
+                if (!embeddedXml) {
+                    continue;
+                }
+
+                /*
+                 * Buscamos específicamente el XML Invoice.
+                 * El AttachedDocument también puede contener
+                 * un ApplicationResponse.
+                 */
+                const invoiceStart = embeddedXml.search(
+                    /<(?:(?:\w+):)?Invoice(?:\s|>)/i
+                );
+
+                if (invoiceStart < 0) {
+                    continue;
+                }
+
+                embeddedXml = embeddedXml.substring(invoiceStart);
+
+                const invoiceEndMatch = embeddedXml.match(
+                    /<\/(?:(?:\w+):)?Invoice\s*>/i
+                );
+
+                if (!invoiceEndMatch) {
+                    continue;
+                }
+
+                embeddedXml = embeddedXml.substring(
+                    0,
+                    invoiceEndMatch.index +
+                    invoiceEndMatch[0].length
+                );
+
+                /*
+                 * Por si el contenido fue escapado como &lt;Invoice&gt;.
+                 */
+                embeddedXml = embeddedXml
+                    .replace(/&lt;/g, '<')
+                    .replace(/&gt;/g, '>')
+                    .replace(/&quot;/g, '"')
+                    .replace(/&apos;/g, "'")
+                    .replace(/&amp;/g, '&');
+
+                const invoiceDocument = xml.Parser.fromString({
+                    text: embeddedXml
+                });
+
+                const invoiceRootName = cleanText(
+                    invoiceDocument?.documentElement?.localName ||
+                    invoiceDocument?.documentElement?.nodeName
+                ).replace(/^.*:/, '');
+
+                if (invoiceRootName === 'Invoice') {
+                    return {
+                        xmlText: embeddedXml,
+                        document: invoiceDocument,
+                        wasWrapped: true
+                    };
+                }
+            }
+
+            throw new Error(
+                'El archivo es un AttachedDocument de Colombia, pero no se encontró la factura Invoice dentro del adjunto.'
+            );
+        } catch (functionError) {
+            logFunctionError('unwrapElectronicInvoice', functionError);
+            throw functionError;
+        }
     };
 
     const parseElectronicInvoice = xmlText => {
+        try {
 
-        const unwrapped = unwrapElectronicInvoice(xmlText);
-        const document = unwrapped.document;
+            const unwrapped = unwrapElectronicInvoice(xmlText);
+            const document = unwrapped.document;
 
-        let detectedCountry;
+            let detectedCountry;
 
-        /*
-         * Un AttachedDocument con una factura embebida
-         * corresponde al formato DIAN de Colombia.
-         */
-        if (unwrapped.wasWrapped) {
-            detectedCountry = 'CO';
-        } else {
-            detectedCountry = detectCountry(document);
-        }
+            /*
+             * Un AttachedDocument con una factura embebida
+             * corresponde al formato DIAN de Colombia.
+             */
+            if (unwrapped.wasWrapped) {
+                detectedCountry = 'CO';
+            } else {
+                detectedCountry = detectCountry(document);
+            }
 
-        const parser = COUNTRY_ADAPTERS[detectedCountry];
+            const parser = COUNTRY_ADAPTERS[detectedCountry];
 
-        if (!parser) {
-            throw new Error(
-                `No existe un adaptador configurado para el país ${detectedCountry}.`
-            );
-        }
+            if (!parser) {
+                throw new Error(
+                    `No existe un adaptador configurado para el país ${detectedCountry}.`
+                );
+            }
 
-        const data = parser(document);
+            const data = parser(document);
 
-        if (!data.documentId) {
-            throw new Error(
-                'No se encontró UUID, CUFE o número único del comprobante.'
-            );
-        }
+            if (!data.documentId) {
+                throw new Error(
+                    'No se encontró UUID, CUFE o número único del comprobante.'
+                );
+            }
 
-        if (!data.supplierTaxId) {
-            throw new Error(
-                'No se encontró la identificación fiscal del proveedor.'
-            );
-        }
+            if (!data.supplierTaxId) {
+                throw new Error(
+                    'No se encontró la identificación fiscal del proveedor.'
+                );
+            }
 
-        if (!data.customerTaxId) {
-            throw new Error(
-                'No se encontró la identificación fiscal del receptor.'
-            );
-        }
+            if (!data.customerTaxId) {
+                throw new Error(
+                    'No se encontró la identificación fiscal del receptor.'
+                );
+            }
 
-        if (!data.total) {
-            throw new Error(
-                'No se encontró el total del comprobante.'
-            );
-        }
+            if (!data.total) {
+                throw new Error(
+                    'No se encontró el total del comprobante.'
+                );
+            }
 
-        // Identificador fiscal único: UUID / CUFE / equivalente.
-        data.documentId = cleanText(data.documentId).toUpperCase();
+            // Identificador fiscal único: UUID / CUFE / equivalente.
+            data.documentId = cleanText(data.documentId).toUpperCase();
 
-        // Número visible del comprobante: Folio / cbc:ID.
-        // Si un XML excepcionalmente no lo informa, se usa documentId como respaldo.
-        data.documentNumber = cleanText(
-            data.documentNumber || data.documentId
-        ).toUpperCase();
+            // Número visible del comprobante: Folio / cbc:ID.
+            // Si un XML excepcionalmente no lo informa, se usa documentId como respaldo.
+            data.documentNumber = cleanText(
+                data.documentNumber || data.documentId
+            ).toUpperCase();
 
-        // ============================================================
-        // FECHA DE EMISIÓN DEL XML
-        // ============================================================
+            // ============================================================
+            // FECHA DE EMISIÓN DEL XML
+            // ============================================================
 
-        data.issueDate =
-            normalizeIssueDate(
-                data.issueDate
-            );
-
-
-        if (!data.issueDate) {
-
-            throw new Error(
-                'No se encontró una fecha de emisión válida en el XML.'
-            );
-        }
-
-
-        log.audit({
-            title: 'Fecha de emisión del comprobante',
-            details: {
-                countryCode:
-                    data.countryCode,
-
-                documentNumber:
-                    data.documentNumber,
-
-                issueDate:
+            data.issueDate =
+                normalizeIssueDate(
                     data.issueDate
-            }
-        });
+                );
 
-        if (!data.documentNumber) {
-            throw new Error(
-                'No se encontró el número de factura del comprobante.'
-            );
+
+            if (!data.issueDate) {
+
+                throw new Error(
+                    'No se encontró una fecha de emisión válida en el XML.'
+                );
+            }
+
+
+            log.audit({
+                title: 'Fecha de emisión del comprobante',
+                details: {
+                    countryCode:
+                        data.countryCode,
+
+                    documentNumber:
+                        data.documentNumber,
+
+                    issueDate:
+                        data.issueDate
+                }
+            });
+
+            if (!data.documentNumber) {
+                throw new Error(
+                    'No se encontró el número de factura del comprobante.'
+                );
+            }
+
+            log.audit({
+                title: 'Identificadores del comprobante',
+                details: {
+                    countryCode: data.countryCode,
+                    documentNumber: data.documentNumber,
+                    documentId: data.documentId
+                }
+            });
+
+            data.supplierTaxId = normalizeTaxId(data.supplierTaxId);
+            data.customerTaxId = normalizeTaxId(data.customerTaxId);
+
+            data.taxes = enrichAndGroupTaxes(data.countryCode, data.taxes);
+            data.sourceWasWrapped = unwrapped.wasWrapped;
+
+            return data;
+        } catch (functionError) {
+            logFunctionError('parseElectronicInvoice', functionError);
+            throw functionError;
         }
-
-        log.audit({
-            title: 'Identificadores del comprobante',
-            details: {
-                countryCode: data.countryCode,
-                documentNumber: data.documentNumber,
-                documentId: data.documentId
-            }
-        });
-
-        data.supplierTaxId = normalizeTaxId(data.supplierTaxId);
-        data.customerTaxId = normalizeTaxId(data.customerTaxId);
-
-        data.taxes = enrichAndGroupTaxes(data.countryCode, data.taxes);
-        data.sourceWasWrapped = unwrapped.wasWrapped;
-
-        return data;
     };
 
     // -------------------------------------------------------------------------
@@ -3594,61 +3839,71 @@ define([
     // -------------------------------------------------------------------------
 
     const findDuplicateBill = (documentId, documentNumber = '') => {
-        const fiscalId = cleanText(documentId).toUpperCase();
-        const referenceNumber = cleanText(documentNumber || documentId).toUpperCase();
+        try {
+            const fiscalId = cleanText(documentId).toUpperCase();
+            const referenceNumber = cleanText(documentNumber || documentId).toUpperCase();
 
-        if (!fiscalId && !referenceNumber) {
-            return null;
-        }
-
-        const identityFilters = [];
-
-        if (referenceNumber) {
-            identityFilters.push(['tranid', 'is', referenceNumber]);
-        }
-
-        if (fiscalId) {
-            if (identityFilters.length) identityFilters.push('OR');
-            identityFilters.push(['custbody_cfdi_uuid', 'is', fiscalId]);
-        }
-
-        const results = search.create({
-            type: search.Type.VENDOR_BILL,
-            filters: [
-                ['mainline', 'is', 'T'],
-                'AND',
-                identityFilters
-            ],
-            columns: ['internalid', 'transactionnumber', 'tranid']
-        }).run().getRange({ start: 0, end: 1 });
-
-        return results.length
-            ? {
-                id: results[0].getValue('internalid'),
-                transactionNumber: results[0].getValue('transactionnumber'),
-                referenceNumber: results[0].getValue('tranid')
+            if (!fiscalId && !referenceNumber) {
+                return null;
             }
-            : null;
+
+            const identityFilters = [];
+
+            if (referenceNumber) {
+                identityFilters.push(['tranid', 'is', referenceNumber]);
+            }
+
+            if (fiscalId) {
+                if (identityFilters.length) identityFilters.push('OR');
+                identityFilters.push(['custbody_cfdi_uuid', 'is', fiscalId]);
+            }
+
+            const results = search.create({
+                type: search.Type.VENDOR_BILL,
+                filters: [
+                    ['mainline', 'is', 'T'],
+                    'AND',
+                    identityFilters
+                ],
+                columns: ['internalid', 'transactionnumber', 'tranid']
+            }).run().getRange({ start: 0, end: 1 });
+
+            return results.length
+                ? {
+                    id: results[0].getValue('internalid'),
+                    transactionNumber: results[0].getValue('transactionnumber'),
+                    referenceNumber: results[0].getValue('tranid')
+                }
+                : null;
+        } catch (functionError) {
+            logFunctionError('findDuplicateBill', functionError);
+            throw functionError;
+        }
     };
 
     const findSubsidiary = customerTaxId => {
-        const results = search.create({
-            type: search.Type.SUBSIDIARY,
-            filters: [
-                ['taxregistrationnumber', 'is', customerTaxId],
-                'AND',
-                ['isinactive', 'is', 'F']
-            ],
-            columns: ['internalid', 'country', 'name']
-        }).run().getRange({ start: 0, end: 1 });
+        try {
+            const results = search.create({
+                type: search.Type.SUBSIDIARY,
+                filters: [
+                    ['taxregistrationnumber', 'is', customerTaxId],
+                    'AND',
+                    ['isinactive', 'is', 'F']
+                ],
+                columns: ['internalid', 'country', 'name']
+            }).run().getRange({ start: 0, end: 1 });
 
-        if (!results.length) return null;
+            if (!results.length) return null;
 
-        return {
-            id: results[0].getValue('internalid'),
-            countryCode: results[0].getValue('country'),
-            name: results[0].getValue('name')
-        };
+            return {
+                id: results[0].getValue('internalid'),
+                countryCode: results[0].getValue('country'),
+                name: results[0].getValue('name')
+            };
+        } catch (functionError) {
+            logFunctionError('findSubsidiary', functionError);
+            throw functionError;
+        }
     };
 
     const findVendor = (countryCode, supplierTaxId) => {
@@ -3684,135 +3939,140 @@ define([
          * normalizado para tolerar puntos, guiones y espacios.
          */
         const runVendorTaxSearch = includeExactTaxFilter => {
+            try {
 
-            const filters = [
-                [
-                    'taxregistration.nexuscountry',
-                    'anyof',
-                    ...allowedCountries
-                ],
-                'AND',
-                [
-                    'isinactive',
-                    'is',
-                    'F'
-                ]
-            ];
-
-            if (includeExactTaxFilter) {
-                filters.splice(
-                    2,
-                    0,
+                const filters = [
                     [
-                        'taxregistration.taxregistrationnumber',
-                        'is',
-                        normalizedTaxId
+                        'taxregistration.nexuscountry',
+                        'anyof',
+                        ...allowedCountries
                     ],
-                    'AND'
-                );
-            }
+                    'AND',
+                    [
+                        'isinactive',
+                        'is',
+                        'F'
+                    ]
+                ];
 
-            const vendorSearchObj = search.create({
-                type: search.Type.VENDOR,
-                filters,
-                columns: [
-                    search.createColumn({
-                        name: 'internalid'
-                    }),
-                    search.createColumn({
-                        name: 'entityid'
-                    }),
-                    search.createColumn({
-                        name: 'companyname'
-                    }),
-                    search.createColumn({
-                        name: 'nexuscountry',
-                        join: 'taxRegistration'
-                    }),
-                    search.createColumn({
-                        name: 'taxregistrationnumber',
-                        join: 'taxRegistration'
-                    })
-                ]
-            });
-
-            const pagedData = vendorSearchObj.runPaged({
-                pageSize: 1000
-            });
-
-            log.audit({
-                title: includeExactTaxFilter
-                    ? 'Búsqueda proveedor por registro fiscal'
-                    : 'Fallback proveedor por registro fiscal',
-                details: {
-                    countryCode: normalizedCountry,
-                    supplierTaxId: normalizedTaxId,
-                    resultCount: pagedData.count,
-                    nexusCountries: allowedCountries
+                if (includeExactTaxFilter) {
+                    filters.splice(
+                        2,
+                        0,
+                        [
+                            'taxregistration.taxregistrationnumber',
+                            'is',
+                            normalizedTaxId
+                        ],
+                        'AND'
+                    );
                 }
-            });
 
-            const matchesByVendor = {};
-
-            pagedData.pageRanges.forEach(pageRange => {
-
-                const page = pagedData.fetch({
-                    index: pageRange.index
-                });
-
-                page.data.forEach(result => {
-
-                    const vendorId =
-                        result.getValue({
+                const vendorSearchObj = search.create({
+                    type: search.Type.VENDOR,
+                    filters,
+                    columns: [
+                        search.createColumn({
                             name: 'internalid'
-                        });
-
-                    const registrationNumber =
-                        result.getValue({
+                        }),
+                        search.createColumn({
+                            name: 'entityid'
+                        }),
+                        search.createColumn({
+                            name: 'companyname'
+                        }),
+                        search.createColumn({
+                            name: 'nexuscountry',
+                            join: 'taxRegistration'
+                        }),
+                        search.createColumn({
                             name: 'taxregistrationnumber',
                             join: 'taxRegistration'
-                        }) || '';
-
-                    const registrationCountry =
-                        cleanText(
-                            result.getValue({
-                                name: 'nexuscountry',
-                                join: 'taxRegistration'
-                            })
-                        ).toUpperCase();
-
-                    /*
-                     * La existencia del proveedor se valida exclusivamente
-                     * con el RFC/RUC/NIT extraído del XML.
-                     */
-                    if (
-                        normalizeTaxId(registrationNumber) !==
-                        normalizedTaxId
-                    ) {
-                        return;
-                    }
-
-                    if (!vendorId) {
-                        return;
-                    }
-
-                    matchesByVendor[String(vendorId)] = {
-                        vendorId: String(vendorId),
-                        entityId:
-                            result.getValue({
-                                name: 'entityid'
-                            }) || '',
-                        companyName:
-                            result.getValue({
-                                name: 'companyname'
-                            }) || '',
-                        registrationCountry,
-                        registrationNumber
-                    };
+                        })
+                    ]
                 });
-            });
 
-            return Object.values(matchesByVendor);
+                const pagedData = vendorSearchObj.runPaged({
+                    pageSize: 1000
+                });
+
+                log.audit({
+                    title: includeExactTaxFilter
+                        ? 'Búsqueda proveedor por registro fiscal'
+                        : 'Fallback proveedor por registro fiscal',
+                    details: {
+                        countryCode: normalizedCountry,
+                        supplierTaxId: normalizedTaxId,
+                        resultCount: pagedData.count,
+                        nexusCountries: allowedCountries
+                    }
+                });
+
+                const matchesByVendor = {};
+
+                pagedData.pageRanges.forEach(pageRange => {
+
+                    const page = pagedData.fetch({
+                        index: pageRange.index
+                    });
+
+                    page.data.forEach(result => {
+
+                        const vendorId =
+                            result.getValue({
+                                name: 'internalid'
+                            });
+
+                        const registrationNumber =
+                            result.getValue({
+                                name: 'taxregistrationnumber',
+                                join: 'taxRegistration'
+                            }) || '';
+
+                        const registrationCountry =
+                            cleanText(
+                                result.getValue({
+                                    name: 'nexuscountry',
+                                    join: 'taxRegistration'
+                                })
+                            ).toUpperCase();
+
+                        /*
+                         * La existencia del proveedor se valida exclusivamente
+                         * con el RFC/RUC/NIT extraído del XML.
+                         */
+                        if (
+                            normalizeTaxId(registrationNumber) !==
+                            normalizedTaxId
+                        ) {
+                            return;
+                        }
+
+                        if (!vendorId) {
+                            return;
+                        }
+
+                        matchesByVendor[String(vendorId)] = {
+                            vendorId: String(vendorId),
+                            entityId:
+                                result.getValue({
+                                    name: 'entityid'
+                                }) || '',
+                            companyName:
+                                result.getValue({
+                                    name: 'companyname'
+                                }) || '',
+                            registrationCountry,
+                            registrationNumber
+                        };
+                    });
+                });
+
+                return Object.values(matchesByVendor);
+            } catch (functionError) {
+                logFunctionError('findVendor.runVendorTaxSearch', functionError);
+                throw functionError;
+            }
         };
 
 
@@ -3820,127 +4080,132 @@ define([
         // BÚSQUEDA ADICIONAL POR custentity_gd_documento
         // ============================================================
         const runVendorGdDocumentSearch = () => {
+            try {
 
-            const results =
-                search.create({
-                    type: search.Type.VENDOR,
-                    filters: [
-                        [
-                            'custentity_gd_documento',
-                            'is',
-                            normalizedTaxId
+                const results =
+                    search.create({
+                        type: search.Type.VENDOR,
+                        filters: [
+                            [
+                                'custentity_gd_documento',
+                                'is',
+                                normalizedTaxId
+                            ],
+                            'AND',
+                            [
+                                'isinactive',
+                                'is',
+                                'F'
+                            ]
                         ],
-                        'AND',
-                        [
-                            'isinactive',
-                            'is',
-                            'F'
+                        columns: [
+                            'internalid',
+                            'entityid',
+                            'companyname',
+                            'custentity_gd_documento'
                         ]
-                    ],
-                    columns: [
-                        'internalid',
-                        'entityid',
-                        'companyname',
-                        'custentity_gd_documento'
-                    ]
-                })
-                    .run()
-                    .getRange({
-                        start: 0,
-                        end: 100
-                    });
+                    })
+                        .run()
+                        .getRange({
+                            start: 0,
+                            end: 100
+                        });
 
 
-            const matchesByVendor = {};
+                const matchesByVendor = {};
 
 
-            results.forEach(result => {
+                results.forEach(result => {
 
-                const vendorId =
-                    result.getValue('internalid');
+                    const vendorId =
+                        result.getValue('internalid');
 
-                const gdDocumento =
-                    result.getValue(
-                        'custentity_gd_documento'
-                    ) || '';
-
-
-                if (
-                    normalizeTaxId(gdDocumento) !==
-                    normalizedTaxId
-                ) {
-                    return;
-                }
-
-
-                if (!vendorId) {
-                    return;
-                }
-
-
-                matchesByVendor[
-                    String(vendorId)
-                ] = {
-                    vendorId:
-                        String(vendorId),
-
-                    entityId:
+                    const gdDocumento =
                         result.getValue(
-                            'entityid'
-                        ) || '',
-
-                    companyName:
-                        result.getValue(
-                            'companyname'
-                        ) || '',
-
-                    registrationCountry:
-                        '',
-
-                    registrationNumber:
-                        '',
-
-                    gdDocumento,
-
-                    source:
-                        'GD_DOCUMENTO'
-                };
-            });
+                            'custentity_gd_documento'
+                        ) || '';
 
 
-            const matches =
-                Object.values(
-                    matchesByVendor
-                );
+                    if (
+                        normalizeTaxId(gdDocumento) !==
+                        normalizedTaxId
+                    ) {
+                        return;
+                    }
 
 
-            log.audit({
-                title:
-                    'Búsqueda proveedor por GD DOCUMENTO',
-
-                details: {
-                    countryCode:
-                        normalizedCountry,
-
-                    supplierTaxId:
-                        normalizedTaxId,
-
-                    fieldId:
-                        'custentity_gd_documento',
-
-                    resultCount:
-                        matches.length,
-
-                    vendorIds:
-                        matches.map(
-                            item =>
-                                item.vendorId
-                        )
-                }
-            });
+                    if (!vendorId) {
+                        return;
+                    }
 
 
-            return matches;
+                    matchesByVendor[
+                        String(vendorId)
+                    ] = {
+                        vendorId:
+                            String(vendorId),
+
+                        entityId:
+                            result.getValue(
+                                'entityid'
+                            ) || '',
+
+                        companyName:
+                            result.getValue(
+                                'companyname'
+                            ) || '',
+
+                        registrationCountry:
+                            '',
+
+                        registrationNumber:
+                            '',
+
+                        gdDocumento,
+
+                        source:
+                            'GD_DOCUMENTO'
+                    };
+                });
+
+
+                const matches =
+                    Object.values(
+                        matchesByVendor
+                    );
+
+
+                log.audit({
+                    title:
+                        'Búsqueda proveedor por GD DOCUMENTO',
+
+                    details: {
+                        countryCode:
+                            normalizedCountry,
+
+                        supplierTaxId:
+                            normalizedTaxId,
+
+                        fieldId:
+                            'custentity_gd_documento',
+
+                        resultCount:
+                            matches.length,
+
+                        vendorIds:
+                            matches.map(
+                                item =>
+                                    item.vendorId
+                            )
+                    }
+                });
+
+
+                return matches;
+            } catch (functionError) {
+                logFunctionError('findVendor.runVendorGdDocumentSearch', functionError);
+                throw functionError;
+            }
         };
 
         try {
@@ -4207,115 +4472,125 @@ define([
     };
 
     const getSubsidiaryIdsByCountry = countryCode => {
-        const ids = [];
-        search.create({
-            type: search.Type.SUBSIDIARY,
-            filters: [
-                ['country', 'anyof', countryCode],
-                'AND',
-                ['isinactive', 'is', 'F']
-            ],
-            columns: ['internalid']
-        }).run().each(result => {
-            ids.push(result.getValue('internalid'));
-            return true;
-        });
-        return ids;
+        try {
+            const ids = [];
+            search.create({
+                type: search.Type.SUBSIDIARY,
+                filters: [
+                    ['country', 'anyof', countryCode],
+                    'AND',
+                    ['isinactive', 'is', 'F']
+                ],
+                columns: ['internalid']
+            }).run().each(result => {
+                ids.push(result.getValue('internalid'));
+                return true;
+            });
+            return ids;
+        } catch (functionError) {
+            logFunctionError('getSubsidiaryIdsByCountry', functionError);
+            throw functionError;
+        }
     };
 
     const getBrandOptionsByCountry = countryCode => {
+        try {
 
-        const normalizedCountry =
-            cleanText(countryCode).toUpperCase();
+            const normalizedCountry =
+                cleanText(countryCode).toUpperCase();
 
-        const subsidiaryIds =
-            getSubsidiaryIdsByCountry(normalizedCountry);
+            const subsidiaryIds =
+                getSubsidiaryIdsByCountry(normalizedCountry);
 
-        if (!subsidiaryIds.length) {
+            if (!subsidiaryIds.length) {
 
-            log.error({
-                title: 'Sin subsidiarias para filtrar marcas',
+                log.error({
+                    title: 'Sin subsidiarias para filtrar marcas',
+                    details: {
+                        countryCode: normalizedCountry
+                    }
+                });
+
+                return [];
+            }
+
+            const options = [];
+            const usedIds = new Set();
+
+            const brandSearch = search.create({
+                type: 'customrecord_marca',
+
+                filters: [
+                    [
+                        'custrecord_marca_subsidiaria_operacion',
+                        'anyof',
+                        subsidiaryIds
+                    ],
+                    'AND',
+                    [
+                        'isinactive',
+                        'is',
+                        'F'
+                    ]
+                ],
+
+                columns: [
+                    search.createColumn({
+                        name: 'internalid'
+                    }),
+
+                    search.createColumn({
+                        name: 'name',
+                        sort: search.Sort.ASC
+                    }),
+
+                    search.createColumn({
+                        name: 'custrecord_marca_subsidiaria_operacion'
+                    })
+                ]
+            });
+
+            brandSearch.run().each(result => {
+
+                const brandId =
+                    result.getValue({
+                        name: 'internalid'
+                    });
+
+                if (
+                    !brandId ||
+                    usedIds.has(String(brandId))
+                ) {
+                    return true;
+                }
+
+                usedIds.add(String(brandId));
+
+                options.push({
+                    value: String(brandId),
+                    text:
+                        result.getValue({
+                            name: 'name'
+                        }) || String(brandId)
+                });
+
+                return true;
+            });
+
+            log.audit({
+                title: 'Marcas filtradas por país',
                 details: {
-                    countryCode: normalizedCountry
+                    countryCode: normalizedCountry,
+                    subsidiaryIds,
+                    brandCount: options.length
                 }
             });
 
-            return [];
+            return options;
+        } catch (functionError) {
+            logFunctionError('getBrandOptionsByCountry', functionError);
+            throw functionError;
         }
-
-        const options = [];
-        const usedIds = new Set();
-
-        const brandSearch = search.create({
-            type: 'customrecord_marca',
-
-            filters: [
-                [
-                    'custrecord_marca_subsidiaria_operacion',
-                    'anyof',
-                    subsidiaryIds
-                ],
-                'AND',
-                [
-                    'isinactive',
-                    'is',
-                    'F'
-                ]
-            ],
-
-            columns: [
-                search.createColumn({
-                    name: 'internalid'
-                }),
-
-                search.createColumn({
-                    name: 'name',
-                    sort: search.Sort.ASC
-                }),
-
-                search.createColumn({
-                    name: 'custrecord_marca_subsidiaria_operacion'
-                })
-            ]
-        });
-
-        brandSearch.run().each(result => {
-
-            const brandId =
-                result.getValue({
-                    name: 'internalid'
-                });
-
-            if (
-                !brandId ||
-                usedIds.has(String(brandId))
-            ) {
-                return true;
-            }
-
-            usedIds.add(String(brandId));
-
-            options.push({
-                value: String(brandId),
-                text:
-                    result.getValue({
-                        name: 'name'
-                    }) || String(brandId)
-            });
-
-            return true;
-        });
-
-        log.audit({
-            title: 'Marcas filtradas por país',
-            details: {
-                countryCode: normalizedCountry,
-                subsidiaryIds,
-                brandCount: options.length
-            }
-        });
-
-        return options;
     };
 
     const getBrandSegmentId = brandId => {
@@ -4334,34 +4609,46 @@ define([
     };
 
     const getVendorCurrencies = vendorId => {
-        if (!vendorId) return [];
-        const vendor = record.load({ type: record.Type.VENDOR, id: vendorId });
-        const values = [];
-        const count = vendor.getLineCount({ sublistId: 'currency' });
+        try {
+            if (!vendorId) return [];
+            const vendor = record.load({ type: record.Type.VENDOR, id: vendorId });
+            const values = [];
+            const count = vendor.getLineCount({ sublistId: 'currency' });
 
-        for (let line = 0; line < count; line++) {
-            const id = vendor.getSublistValue({ sublistId: 'currency', fieldId: 'currency', line });
-            if (!id) continue;
-            const currency = search.lookupFields({ type: 'currency', id, columns: ['name', 'symbol'] });
-            values.push({ id, name: currency.name || currency.symbol || String(id) });
+            for (let line = 0; line < count; line++) {
+                const id = vendor.getSublistValue({ sublistId: 'currency', fieldId: 'currency', line });
+                if (!id) continue;
+                const currency = search.lookupFields({ type: 'currency', id, columns: ['name', 'symbol'] });
+                values.push({ id, name: currency.name || currency.symbol || String(id) });
+            }
+
+            return {
+                values,
+                primary: vendor.getValue('currency')
+            };
+        } catch (functionError) {
+            logFunctionError('getVendorCurrencies', functionError);
+            throw functionError;
         }
-
-        return {
-            values,
-            primary: vendor.getValue('currency')
-        };
     };
 
     // -------------------------------------------------------------------------
     // Archivos y proveedor
     // -------------------------------------------------------------------------
 
-    const saveUploadedFile = (uploadedFile, fileType) => file.create({
-        name: uploadedFile.name,
-        fileType,
-        contents: uploadedFile.getContents(),
-        folder: CONFIG.FILE_FOLDER_ID
-    }).save();
+    const saveUploadedFile = (uploadedFile, fileType) => {
+        try {
+            return file.create({
+                name: uploadedFile.name,
+                fileType,
+                contents: uploadedFile.getContents(),
+                folder: CONFIG.FILE_FOLDER_ID
+            }).save();
+        } catch (functionError) {
+            logFunctionError('saveUploadedFile', functionError);
+            throw functionError;
+        }
+    };
 
     const addVendorTaxRegistration = (
         vendorRecord,
@@ -4434,1274 +4721,359 @@ define([
         }
     };
     const updateVendorTaxInformation = (vendorId, data) => {
+        try {
 
-        const vendor = record.load({
-            type: record.Type.VENDOR,
-            id: vendorId,
-            isDynamic: true
-        });
-
-        const countryCode = cleanText(data.countryCode).toUpperCase();
-        const supplierTaxId = normalizeTaxId(data.supplierTaxId);
-
-        // México
-        if (countryCode === 'MX') {
-            vendor.setValue({
-                fieldId: 'custentity_mx_rfc',
-                value: supplierTaxId
-            });
-        }
-
-        // Revisar si ya existe el registro fiscal
-        const count = vendor.getLineCount({
-            sublistId: 'taxregistration'
-        });
-
-        let exists = false;
-
-        for (let i = 0; i < count; i++) {
-
-            const nexus = vendor.getSublistValue({
-                sublistId: 'taxregistration',
-                fieldId: 'nexuscountry',
-                line: i
+            const vendor = record.load({
+                type: record.Type.VENDOR,
+                id: vendorId,
+                isDynamic: true
             });
 
-            if (cleanText(nexus).toUpperCase() === countryCode) {
+            const countryCode = cleanText(data.countryCode).toUpperCase();
+            const supplierTaxId = normalizeTaxId(data.supplierTaxId);
 
-                vendor.selectLine({
+            // México
+            if (countryCode === 'MX') {
+                vendor.setValue({
+                    fieldId: 'custentity_mx_rfc',
+                    value: supplierTaxId
+                });
+            }
+
+            // Revisar si ya existe el registro fiscal
+            const count = vendor.getLineCount({
+                sublistId: 'taxregistration'
+            });
+
+            let exists = false;
+
+            for (let i = 0; i < count; i++) {
+
+                const nexus = vendor.getSublistValue({
                     sublistId: 'taxregistration',
+                    fieldId: 'nexuscountry',
                     line: i
                 });
 
-                vendor.setCurrentSublistValue({
-                    sublistId: 'taxregistration',
-                    fieldId: 'taxregistrationnumber',
-                    value: supplierTaxId
-                });
+                if (cleanText(nexus).toUpperCase() === countryCode) {
 
-                vendor.commitLine({
-                    sublistId: 'taxregistration'
-                });
+                    vendor.selectLine({
+                        sublistId: 'taxregistration',
+                        line: i
+                    });
 
-                exists = true;
-                break;
+                    vendor.setCurrentSublistValue({
+                        sublistId: 'taxregistration',
+                        fieldId: 'taxregistrationnumber',
+                        value: supplierTaxId
+                    });
+
+                    vendor.commitLine({
+                        sublistId: 'taxregistration'
+                    });
+
+                    exists = true;
+                    break;
+                }
             }
+
+            if (!exists) {
+                addVendorTaxRegistration(
+                    vendor,
+                    countryCode,
+                    supplierTaxId
+                );
+            }
+
+            vendor.save({
+                enableSourcing: true,
+                ignoreMandatoryFields: true
+            });
+
+            return vendorId;
+        } catch (functionError) {
+            logFunctionError('updateVendorTaxInformation', functionError);
+            throw functionError;
         }
-
-        if (!exists) {
-            addVendorTaxRegistration(
-                vendor,
-                countryCode,
-                supplierTaxId
-            );
-        }
-
-        vendor.save({
-            enableSourcing: true,
-            ignoreMandatoryFields: true
-        });
-
-        return vendorId;
     };
 
     const getTipoDocumentoPeru = codigoDocumento => {
+        try {
 
-        const codigo =
-            cleanText(codigoDocumento);
+            const codigo =
+                cleanText(codigoDocumento);
 
-        if (!codigo) {
-            throw new Error(
-                'El XML de Perú no contiene el schemeID del tipo de documento.'
-            );
-        }
+            log.audit({ title: 'Búsqueda tipo documento Perú - código SUNAT', details: codigo });
+
+            if (!codigo) {
+                throw new Error(
+                    'El XML de Perú no contiene el schemeID del tipo de documento.'
+                );
+            }
 
 
-        const customrecord_gd_tipo_de_documentoSearchObj =
-            search.create({
+            const customrecord_gd_tipo_de_documentoSearchObj =
+                search.create({
 
-                type:
-                    'customrecord_gd_tipo_de_documento',
+                    type:
+                        'customrecord_gd_tipo_de_documento',
 
-                filters: [
-                    [
-                        'custrecord53',
-                        'equalto',
-                        codigo
+                    filters: [
+                        [
+                            'custrecord53',
+                            'is',
+                            codigo
+                        ]
+                    ],
+
+                    columns: [
+
+                        search.createColumn({
+                            name: 'internalid'
+                        }),
+
+                        search.createColumn({
+                            name: 'name',
+                            label: 'Nombre'
+                        }),
+
+                        search.createColumn({
+                            name: 'scriptid',
+                            label: 'ID de script'
+                        }),
+
+                        search.createColumn({
+                            name: 'custrecord_gd_codigo_tipo_documento',
+                            label: 'CODIGO TIPO DOCUMENTO'
+                        }),
+
+                        search.createColumn({
+                            name: 'custrecord_gd_pais_documento',
+                            label: 'PAIS DOCUMENTO'
+                        })
                     ]
-                ],
-
-                columns: [
-
-                    search.createColumn({
-                        name: 'internalid'
-                    }),
-
-                    search.createColumn({
-                        name: 'name',
-                        label: 'Nombre'
-                    }),
-
-                    search.createColumn({
-                        name: 'scriptid',
-                        label: 'ID de script'
-                    }),
-
-                    search.createColumn({
-                        name: 'custrecord_gd_codigo_tipo_documento',
-                        label: 'CODIGO TIPO DOCUMENTO'
-                    }),
-
-                    search.createColumn({
-                        name: 'custrecord_gd_pais_documento',
-                        label: 'PAIS DOCUMENTO'
-                    })
-                ]
-            });
-
-
-        const results =
-            customrecord_gd_tipo_de_documentoSearchObj
-                .run()
-                .getRange({
-                    start: 0,
-                    end: 2
                 });
 
 
-        log.audit({
-            title:
-                'Búsqueda tipo documento Perú',
+            const results =
+                customrecord_gd_tipo_de_documentoSearchObj
+                    .run()
+                    .getRange({
+                        start: 0,
+                        end: 2
+                    });
 
-            details: {
-                codigoXML:
-                    codigo,
 
-                resultados:
-                    results.length
+            log.audit({
+                title:
+                    'Búsqueda tipo documento Perú',
+
+                details: {
+                    codigoXML:
+                        codigo,
+
+                    resultados:
+                        results.length
+                }
+            });
+
+
+            if (!results.length) {
+
+                throw new Error(
+                    `No se encontró un tipo de documento configurado ` +
+                    `para el código SUNAT ${codigo}.`
+                );
             }
-        });
 
 
-        if (!results.length) {
+            if (results.length > 1) {
 
-            throw new Error(
-                `No se encontró un tipo de documento configurado ` +
-                `para el código SUNAT ${codigo}.`
-            );
+                throw new Error(
+                    `Se encontró más de un tipo de documento ` +
+                    `con el código SUNAT ${codigo}.`
+                );
+            }
+
+
+            const result =
+                results[0];
+
+
+            const tipoDocumento = {
+
+                id:
+                    result.getValue({
+                        name: 'internalid'
+                    }),
+
+                nombre:
+                    result.getValue({
+                        name: 'name'
+                    }),
+
+                codigo:
+                    result.getValue({
+                        name:
+                            'custrecord_gd_codigo_tipo_documento'
+                    }),
+
+                pais:
+                    result.getText({
+                        name:
+                            'custrecord_gd_pais_documento'
+                    }) ||
+                    result.getValue({
+                        name:
+                            'custrecord_gd_pais_documento'
+                    })
+            };
+
+
+            log.audit({
+                title:
+                    'Tipo documento Perú encontrado',
+
+                details:
+                    tipoDocumento
+            });
+
+
+            return tipoDocumento.id;
+        } catch (functionError) {
+            logFunctionError('getTipoDocumentoPeru', functionError);
+            throw functionError;
         }
-
-
-        if (results.length > 1) {
-
-            throw new Error(
-                `Se encontró más de un tipo de documento ` +
-                `con el código SUNAT ${codigo}.`
-            );
-        }
-
-
-        const result =
-            results[0];
-
-
-        const tipoDocumento = {
-
-            id:
-                result.getValue({
-                    name: 'internalid'
-                }),
-
-            nombre:
-                result.getValue({
-                    name: 'name'
-                }),
-
-            codigo:
-                result.getValue({
-                    name:
-                        'custrecord_gd_codigo_tipo_documento'
-                }),
-
-            pais:
-                result.getText({
-                    name:
-                        'custrecord_gd_pais_documento'
-                }) ||
-                result.getValue({
-                    name:
-                        'custrecord_gd_pais_documento'
-                })
-        };
-
-
-        log.audit({
-            title:
-                'Tipo documento Perú encontrado',
-
-            details:
-                tipoDocumento
-        });
-
-
-        return tipoDocumento.id;
     };
 
     const getTipoPersonaPeru = (schemeID) => {
+        try {
 
-        switch (String(schemeID)) {
+            switch (String(schemeID)) {
 
-            case '6':
-                return 'Persona Jurídica';
+                case '6':
+                    return 'Persona Jurídica';
 
-            case '1':
-                return 'Persona Natural';
+                case '1':
+                    return 'Persona Natural';
 
-            default:
-                return 'Extranjero';
+                default:
+                    return 'Extranjero';
+            }
+        } catch (functionError) {
+            logFunctionError('getTipoPersonaPeru', functionError);
+            throw functionError;
         }
     };
 
     const updateVendorPeruDocumentType = (vendorId, data) => {
+        try {
 
-        if (
-            !vendorId ||
-            data.countryCode !== 'PE' ||
-            !data.supplierDocumentTypeCode
-        ) {
-            return vendorId;
-        }
+            if (
+                !vendorId ||
+                data.countryCode !== 'PE' ||
+                !data.supplierDocumentTypeCode
+            ) {
+                return vendorId;
+            }
 
-        const vendor = record.load({
-            type: record.Type.VENDOR,
-            id: vendorId,
-            isDynamic: false
-        });
-
-        const currentCountry =
-            vendor.getValue({
-                fieldId: 'custentity_gd_pais_documento'
+            const vendor = record.load({
+                type: record.Type.VENDOR,
+                id: vendorId,
+                isDynamic: false
             });
 
-        const currentDocument =
-            vendor.getValue({
-                fieldId: 'custentity_gd_pe_documento_identidad'
-            });
+            const currentCountry =
+                vendor.getValue({
+                    fieldId: 'custentity_gd_pais_documento'
+                });
+
+            const currentDocument =
+                vendor.getValue({
+                    fieldId: 'custentity_gd_pe_documento_identidad'
+                });
 
 
-        // Solo llena si está vacío
-        if (!currentCountry) {
-            vendor.setText({
-                fieldId: 'custentity_gd_pais_documento',
-                text: 'Peru'
-            });
-        }
-
-
-        if (!currentDocument) {
-
-            const tipoDocumentoId =
-                getTipoDocumentoPeru(
-                    data.supplierDocumentTypeCode
-                );
-
-            if (tipoDocumentoId) {
-
-                vendor.setValue({
-                    fieldId:
-                        'custentity_gd_pe_documento_identidad',
-
-                    value:
-                        tipoDocumentoId
+            // Solo llena si está vacío
+            if (!currentCountry) {
+                vendor.setText({
+                    fieldId: 'custentity_gd_pais_documento',
+                    text: 'Peru'
                 });
             }
-        }
 
 
-        vendor.save({
-            enableSourcing: true,
-            ignoreMandatoryFields: true
-        });
+            if (!currentDocument) {
 
+                const tipoDocumentoId =
+                    getTipoDocumentoPeru(
+                        data.supplierDocumentTypeCode
+                    );
 
-        log.audit({
-            title:
-                'Proveedor existente actualizado Perú',
+                if (tipoDocumentoId) {
 
-            details: {
-                vendorId,
-                codigoDocumento:
-                    data.supplierDocumentTypeCode,
-                campoActualizado:
-                    !currentDocument
+                    vendor.setValue({
+                        fieldId:
+                            'custentity_gd_pe_documento_identidad',
+
+                        value:
+                            tipoDocumentoId
+                    });
+                }
             }
-        });
 
 
-        return vendorId;
+            vendor.save({
+                enableSourcing: true,
+                ignoreMandatoryFields: true
+            });
+
+
+            log.audit({
+                title:
+                    'Proveedor existente actualizado Perú',
+
+                details: {
+                    vendorId,
+                    codigoDocumento:
+                        data.supplierDocumentTypeCode,
+                    campoActualizado:
+                        !currentDocument
+                }
+            });
+
+
+            return vendorId;
+        } catch (functionError) {
+            logFunctionError('updateVendorPeruDocumentType', functionError);
+            throw functionError;
+        }
     };
 
     function updateVendorPeruTypeOfPerson(vendorId, data) {
+        try {
 
-        if (
-            !vendorId ||
-            cleanText(data.countryCode).toUpperCase() !== 'PE'
-        ) {
-            return vendorId;
-        }
-
-        var schemeID = data.schemeID;
-
-        if (typeof schemeID === 'object') {
-            schemeID = schemeID.schemeID;
-        }
-
-
-        var tipoPersonaId;
-
-
-        switch (String(schemeID)) {
-
-            case "6":
-                // Persona Jurídica RUC
-                tipoPersonaId = "2";
-                break;
-
-            case "1":
-                // Persona Natural
-                tipoPersonaId = "1";
-                break;
-
-            default:
-                tipoPersonaId = "3";
-                break;
-        }
-
-
-        log.audit({
-            title: "Tipo Persona Perú - ID asignado",
-            details: {
-                vendorId: vendorId,
-                schemeID: schemeID,
-                internalId: tipoPersonaId
+            if (
+                !vendorId ||
+                cleanText(data.countryCode).toUpperCase() !== 'PE'
+            ) {
+                return vendorId;
             }
-        });
 
+            var schemeID = data.schemeID;
 
-        var vendor = record.load({
-            type: record.Type.VENDOR,
-            id: vendorId
-        });
-
-
-        vendor.setValue({
-            fieldId: "custentity_gd_pe_type_of_person",
-            value: tipoPersonaId
-        });
-
-        vendor.setValue({
-            fieldId: "custentity_fte_entity_l_taxregime",
-            value: '4'
-        });
-
-        log.audit({
-            title: "Régimen fiscal SuiteTax Latam actualizado Perú",
-            details: {
-                vendorId: vendorId,
-                fieldId: "custentity_fte_entity_l_taxregime",
-                value: '4'
+            if (typeof schemeID === 'object') {
+                schemeID = schemeID.schemeID;
             }
-        });
 
 
-        let vendorSave = vendor.save({
-            ignoreMandatoryFields: true
-        });
+            var tipoPersonaId;
 
 
-        log.audit({
-            title: "Tipo Persona Perú actualizado",
-            details: {
-                vendorId: vendorId,
-                valorGuardado: tipoPersonaId
-            }
-        });
-
-        return vendorSave
-    }
-
-    const getColombiaStateCandidates = stateName => {
-
-        const raw =
-            cleanText(stateName);
-
-        const normalized =
-            raw
-                .toUpperCase()
-                .normalize('NFD')
-                .replace(/[\u0300-\u036f]/g, '')
-                .replace(/[.,]/g, '')
-                .replace(/\s+/g, ' ')
-                .trim();
-
-        const aliases = {
-            'BOGOTA': [
-                'Bogotá D.C.',
-                'Bogota D.C.',
-                'Bogotá',
-                'Bogota'
-            ],
-            'BOGOTA DC': [
-                'Bogotá D.C.',
-                'Bogota D.C.',
-                'Bogotá',
-                'Bogota'
-            ],
-            'NORTE DE SANTANDER': [
-                'Norte De Santander',
-                'Norte de Santander'
-            ],
-            'VALLE DEL CAUCA': [
-                'Valle Del Cauca',
-                'Valle del Cauca'
-            ],
-            'SAN ANDRES': [
-                'San Andrés',
-                'San Andres'
-            ]
-        };
-
-        return [
-            ...(aliases[normalized] || []),
-            raw
-        ].filter(Boolean);
-    };
-
-
-    const getColombiaCityCandidates = cityName => {
-
-        const raw =
-            cleanText(cityName);
-
-        if (!raw) {
-            return [];
-        }
-
-        /*
-         * La ciudad se toma exclusivamente de cbc:CityName.
-         * No usamos cbc:ID (código DANE) para seleccionar GD CIUDAD.
-         *
-         * Se agregan variantes sólo para tolerar diferencias de puntuación
-         * del catálogo de NetSuite.
-         */
-        return [
-            // NetSuite puede tener "Bogotá D.C." mientras DIAN envía
-            // "Bogotá, D.C.". Probamos primero la variante sin coma.
-            raw.replace(/,\s*/g, ' '),
-            raw,
-            raw.replace(/\./g, ''),
-            raw.replace(/,\s*/g, ' ').replace(/\./g, '')
-        ].filter(Boolean);
-    };
-
-
-    const getColombiaDocumentTypeCandidates = code => {
-
-        const normalized =
-            cleanText(code).toUpperCase();
-
-        const map = {
-            '11': ['Registro civil'],
-            '12': ['Tarjeta de identidad'],
-            '13': ['Cédula de ciudadanía', 'Cedula de ciudadania'],
-            '21': ['Tarjeta de extranjería', 'Tarjeta de extranjeria'],
-            '22': ['Cédula de extranjería', 'Cedula de extranjeria'],
-            '31': ['NIT'],
-            '41': ['Pasaporte'],
-            '42': ['Documento de identificación extranjero', 'Documento de identificacion extranjero'],
-            '47': ['PEP'],
-            '48': ['PPT'],
-            '50': ['NIT de otro país', 'NIT de otro pais']
-        };
-
-        return [
-            ...(map[normalized] || []),
-            normalized
-        ].filter(Boolean);
-    };
-
-
-    const setColombiaRegimenFiscal = (vendor, data) => {
-
-        const responsibility =
-            cleanText(
-                data.supplierFiscalResponsibility
-            ).toUpperCase();
-
-        const regime =
-            cleanText(
-                data.supplierFiscalRegime
-            )
-                .toUpperCase()
-                .normalize('NFD')
-                .replace(/[\u0300-\u036f]/g, '');
-
-        /*
-         * Catálogo confirmado en esta cuenta:
-         * 1 = Régimen Ordinario
-         * 2 = Régimen Simple
-         */
-        let internalId = '';
-
-        if (
-            /^(?:O|0)-47$/i.test(responsibility) ||
-            regime.includes('SIMPLE') ||
-            regime.includes('RST')
-        ) {
-            internalId = '2';
-        } else if (
-            regime === 'IVA' ||
-            regime.includes('ORDINARIO') ||
-            responsibility
-        ) {
-            internalId = '1';
-        }
-
-        if (!internalId) {
-            return false;
-        }
-
-        vendor.setValue({
-            fieldId:
-                'custentity_gd_co_regimen_fiscal',
-            value:
-                internalId
-        });
-
-        log.audit({
-            title:
-                'Régimen fiscal Colombia asignado por ID confirmado',
-            details: {
-                xmlRegime:
-                    data.supplierFiscalRegime,
-                xmlResponsibility:
-                    data.supplierFiscalResponsibility,
-                internalId
-            }
-        });
-
-        return true;
-    };
-
-
-    const setColombiaResponsabilidadFiscal = (vendor, value) => {
-
-        const raw =
-            cleanText(value);
-
-        const normalized =
-            raw
-                .toUpperCase()
-                .normalize('NFD')
-                .replace(/[\u0300-\u036f]/g, '')
-                .replace(/\s+/g, '')
-                .replace(/_/g, '-');
-
-        /*
-         * Catálogo confirmado en esta cuenta:
-         * 1 = 0-13 Gran Contribuyente
-         * 2 = 0-15 Autorretenedor
-         * 3 = 0-23 Agente de retención IVA
-         * 4 = 0-47 Régimen simple de tributación
-         * 5 = R-99 PN No aplica - Otros
-         */
-        const map = {
-            'O-13': '1',
-            '0-13': '1',
-
-            'O-15': '2',
-            '0-15': '2',
-
-            'O-23': '3',
-            '0-23': '3',
-
-            'O-47': '4',
-            '0-47': '4',
-
-            'R-99-PN': '5',
-            'R-99PN': '5',
-            'R-99': '5'
-        };
-
-        const internalId =
-            map[normalized] || '';
-
-        if (!internalId) {
-
-            log.error({
-                title:
-                    'Responsabilidad fiscal Colombia sin mapeo',
-                details: {
-                    xmlValue:
-                        raw
-                }
-            });
-
-            return false;
-        }
-
-        vendor.setValue({
-            fieldId:
-                'custentity_gd_co_responsabilidad_fiscal',
-            value:
-                internalId
-        });
-
-        log.audit({
-            title:
-                'Responsabilidad fiscal Colombia asignada por ID confirmado',
-            details: {
-                xmlValue:
-                    raw,
-                internalId
-            }
-        });
-
-        return true;
-    };
-
-
-    const getColombiaFiscalRegimeCandidates = value => {
-
-        const raw =
-            cleanText(value);
-
-        const normalized =
-            raw
-                .toUpperCase()
-                .normalize('NFD')
-                .replace(/[\u0300-\u036f]/g, '')
-                .replace(/\s+/g, ' ')
-                .trim();
-
-        /*
-         * IMPORTANTE:
-         * PartyTaxScheme/TaxScheme/Name en DIAN describe el impuesto
-         * (por ejemplo "IVA"), no necesariamente el régimen fiscal
-         * del proveedor.
-         *
-         * En esta cuenta NetSuite, el catálogo del campo es:
-         * 1 = Régimen Ordinario
-         * 2 = Régimen Simple
-         *
-         * Si el XML trae "IVA", no existe una equivalencia directa.
-         * Para responsabilidad O-47/RST podemos inferir Régimen Simple.
-         * En los demás casos usamos Régimen Ordinario como regla
-         * configurable de esta implementación.
-         */
-        if (
-            normalized.includes('SIMPLE') ||
-            normalized.includes('RST')
-        ) {
-            return [
-                'Régimen Simple',
-                'Regimen Simple'
-            ];
-        }
-
-        if (
-            normalized === 'IVA' ||
-            normalized.includes('ORDINARIO')
-        ) {
-            return [
-                'Régimen Ordinario',
-                'Regimen Ordinario'
-            ];
-        }
-
-        return raw
-            ? [raw]
-            : [];
-    };
-
-
-    const getColombiaFiscalResponsibilityCandidates = value => {
-
-        const raw =
-            cleanText(value);
-
-        const normalized =
-            raw
-                .toUpperCase()
-                .normalize('NFD')
-                .replace(/[\u0300-\u036f]/g, '')
-                .replace(/\s+/g, '')
-                .replace(/_/g, '-');
-
-        /*
-         * DIAN -> catálogo real de NetSuite.
-         *
-         * En varios XML DIAN el código puede venir con letra O:
-         * O-13, O-15, O-23, O-47.
-         *
-         * El catálogo de esta cuenta está visible con cero:
-         * 0-13, 0-15, 0-23, 0-47.
-         */
-        const map = {
-            'R-99-PN': [
-                'R-99 PN No aplica - Otros*',
-                'R-99 PN No aplica - Otros',
-                'R-99 PN',
-                'R-99'
-            ],
-            'R-99PN': [
-                'R-99 PN No aplica - Otros*',
-                'R-99 PN No aplica - Otros',
-                'R-99 PN',
-                'R-99'
-            ],
-
-            'O-13': [
-                '0-13 - Gran Contribuyente',
-                'O-13 - Gran Contribuyente',
-                '0-13',
-                'O-13'
-            ],
-            '0-13': [
-                '0-13 - Gran Contribuyente',
-                '0-13'
-            ],
-
-            'O-15': [
-                '0-15 - Autorretenedor',
-                'O-15 - Autorretenedor',
-                '0-15',
-                'O-15'
-            ],
-            '0-15': [
-                '0-15 - Autorretenedor',
-                '0-15'
-            ],
-
-            'O-23': [
-                '0-23 - Agente de retención IVA',
-                '0-23 - Agente de retencion IVA',
-                'O-23 - Agente de retención IVA',
-                '0-23',
-                'O-23'
-            ],
-            '0-23': [
-                '0-23 - Agente de retención IVA',
-                '0-23 - Agente de retencion IVA',
-                '0-23'
-            ],
-
-            'O-47': [
-                '0-47 - Régimen simple de tributación',
-                '0-47 - Regimen simple de tributacion',
-                'O-47 - Régimen simple de tributación',
-                '0-47',
-                'O-47'
-            ],
-            '0-47': [
-                '0-47 - Régimen simple de tributación',
-                '0-47 - Regimen simple de tributacion',
-                '0-47'
-            ]
-        };
-
-        return [
-            ...(map[normalized] || []),
-            raw
-        ].filter(Boolean);
-    };
-
-
-    const applyVendorColombiaFields = (
-        vendor,
-        data,
-        options = {}
-    ) => {
-
-        const countryCode =
-            cleanText(data.countryCode).toUpperCase();
-
-        const updateCompanyName =
-            options.updateCompanyName !== false;
-
-        if (countryCode !== 'CO') {
-            return;
-        }
-
-        const legalName =
-            cleanText(
-                data.supplierLegalName ||
-                data.supplierName
-            );
-
-        const commercialName =
-            cleanText(
-                data.supplierCommercialName ||
-                legalName
-            );
-
-        const documentNumber =
-            normalizeTaxId(
-                data.supplierTaxId
-            );
-
-        /*
-         * En proveedor EXISTENTE no modificamos companyname.
-         *
-         * NetSuite puede volver a generar/validar el Entity ID al cambiar
-         * companyname y lanzar DUP_VENDOR_NAME aunque el proveedor correcto
-         * ya haya sido localizado por NIT en taxregistration.
-         *
-         * El nombre legal del XML sí se usa al CREAR un proveedor nuevo.
-         */
-        if (
-            updateCompanyName &&
-            legalName
-        ) {
-            safeSetValue(
-                vendor,
-                'companyname',
-                legalName
-            );
-        }
-
-        safeSetValue(
-            vendor,
-            'custentity_gd_nombre_comercial',
-            commercialName
-        );
-
-        safeSetValue(
-            vendor,
-            'custentity_gd_documento',
-            documentNumber
-        );
-
-        safeSetValue(
-            vendor,
-            'custentity_gd_digito_de_verificacion',
-            data.supplierVerificationDigit
-        );
-
-        /*
-         * País y país del documento:
-         * sólo asignamos la selección Colombia.
-         * NO tocamos GD CODIGO PAIS ni GD CODIGO DEL ESTADO.
-         */
-        setSelectByCandidates(
-            vendor,
-            'custentity_gd_pais',
-            [
-                data.supplierCountryName,
-                'Colombia',
-                data.supplierCountryCode,
-                'CO'
-            ]
-        );
-
-        setSelectByCandidates(
-            vendor,
-            'custentity_gd_pais_documento',
-            [
-                data.supplierCountryName,
-                'Colombia',
-                data.supplierCountryCode,
-                'CO'
-            ]
-        );
-
-        setSelectByCandidates(
-            vendor,
-            'custentity_gd_tipo_de_documento_de_ident',
-            [
-                data.supplierDocumentTypeName,
-                ...getColombiaDocumentTypeCandidates(
-                    data.supplierDocumentTypeCode
-                )
-            ]
-        );
-
-        /*
-         * Colombia:
-         * - GD ESTADO  <- cbc:CountrySubentity
-         * - GD CIUDAD  <- cbc:CityName
-         *
-         * NO usamos CountrySubentityCode ni Address/ID para seleccionar
-         * estos dos campos.
-         */
-        setSelectByCandidates(
-            vendor,
-            'custentity_gd_estado',
-            getColombiaStateCandidates(
-                data.supplierStateName
-            )
-        );
-
-        setSelectByCandidates(
-            vendor,
-            'custentity_gd_ciudad',
-            getColombiaCityCandidates(
-                data.supplierCityName
-            )
-        );
-
-        safeSetValue(
-            vendor,
-            'custentity_gd_codigo_ciudad',
-            data.supplierCityCode
-        );
-
-        safeSetValue(
-            vendor,
-            'custentity_gd_codigo_postal',
-            data.supplierPostalCode
-        );
-
-        /*
-         * NO asignar custentity_gd_co_tipo_de_contribuyente desde
-         * cbc:AdditionalAccountID.
-         *
-         * En DIAN AdditionalAccountID identifica el tipo de organización
-         * jurídica (1 = Persona Jurídica, 2 = Persona Natural), mientras
-         * este campo NetSuite contiene clasificaciones tributarias como
-         * Responsable de IVA, Régimen Simple, Gran Contribuyente, etc.
-         * Son catálogos diferentes.
-         */
-
-        log.audit({
-            title: 'Tipo de contribuyente Colombia no asignado automáticamente',
-            details: {
-                additionalAccountId:
-                    data.supplierContributorType,
-                reason:
-                    'AdditionalAccountID DIAN corresponde a tipo de organización jurídica, no al catálogo GD CO Tipo de Contribuyente.'
-            }
-        });
-
-        setColombiaRegimenFiscal(
-            vendor,
-            data
-        );
-
-        setColombiaResponsabilidadFiscal(
-            vendor,
-            data.supplierFiscalResponsibility
-        );
-
-        /*
-         * NO asignar actividad económica desde CorporateRegistrationScheme.
-         * En el XML de prueba el valor es FVP, que corresponde al prefijo
-         * de facturación y no a un código CIIU.
-         */
-        log.audit({
-            title: 'Actividad económica Colombia no asignada automáticamente',
-            details: {
-                xmlValue:
-                    data.supplierEconomicActivity,
-                reason:
-                    'CorporateRegistrationScheme del XML analizado contiene el prefijo de facturación, no un código CIIU.'
-            }
-        });
-
-        log.audit({
-            title: 'Datos Colombia preparados para proveedor',
-            details: {
-                legalName,
-                commercialName,
-                documentNumber,
-                verificationDigit:
-                    data.supplierVerificationDigit,
-                documentTypeCode:
-                    data.supplierDocumentTypeCode,
-                documentTypeName:
-                    data.supplierDocumentTypeName,
-                countryCode:
-                    data.supplierCountryCode,
-                stateCode:
-                    data.supplierStateCode,
-                stateName:
-                    data.supplierStateName,
-                cityCode:
-                    data.supplierCityCode,
-                cityName:
-                    data.supplierCityName,
-                postalCode:
-                    data.supplierPostalCode,
-                contributorType:
-                    data.supplierContributorType,
-                fiscalRegime:
-                    data.supplierFiscalRegime,
-                fiscalResponsibility:
-                    data.supplierFiscalResponsibility,
-                economicActivity:
-                    data.supplierEconomicActivity
-            }
-        });
-    };
-
-
-    const updateVendorColombia = (vendorId, data) => {
-
-        if (
-            !vendorId ||
-            cleanText(data.countryCode).toUpperCase() !== 'CO'
-        ) {
-            return vendorId;
-        }
-
-        const vendor = record.load({
-            type: record.Type.VENDOR,
-            id: vendorId,
-            isDynamic: false
-        });
-
-        applyVendorColombiaFields(
-            vendor,
-            data,
-            {
-                updateCompanyName: false
-            }
-        );
-
-        vendor.setValue({
-            fieldId: 'custentity_fte_entity_l_taxregime',
-            value: '15'
-        });
-
-        log.audit({
-            title: 'Régimen fiscal SuiteTax Latam actualizado Colombia',
-            details: {
-                vendorId,
-                fieldId: 'custentity_fte_entity_l_taxregime',
-                value: '15'
-            }
-        });
-
-
-        log.audit({
-            title: 'Colombia - valores antes de guardar proveedor',
-            details: {
-                vendorId,
-                entityId:
-                    vendor.getValue({
-                        fieldId: 'entityid'
-                    }),
-                companyNameActual:
-                    vendor.getValue({
-                        fieldId: 'companyname'
-                    }),
-                companyNameXML:
-                    data.supplierLegalName ||
-                    data.supplierName ||
-                    '',
-                pais:
-                    vendor.getValue({
-                        fieldId: 'custentity_gd_pais'
-                    }),
-                paisDocumento:
-                    vendor.getValue({
-                        fieldId: 'custentity_gd_pais_documento'
-                    }),
-                tipoDocumento:
-                    vendor.getValue({
-                        fieldId: 'custentity_gd_tipo_de_documento_de_ident'
-                    }),
-                documento:
-                    vendor.getValue({
-                        fieldId: 'custentity_gd_documento'
-                    }),
-                digitoVerificacion:
-                    vendor.getValue({
-                        fieldId: 'custentity_gd_digito_de_verificacion'
-                    }),
-                estado:
-                    vendor.getValue({
-                        fieldId: 'custentity_gd_estado'
-                    }),
-                ciudad:
-                    vendor.getValue({
-                        fieldId: 'custentity_gd_ciudad'
-                    }),
-                codigoCiudad:
-                    vendor.getValue({
-                        fieldId: 'custentity_gd_codigo_ciudad'
-                    }),
-                regimenFiscal:
-                    vendor.getValue({
-                        fieldId: 'custentity_gd_co_regimen_fiscal'
-                    }),
-                responsabilidadFiscal:
-                    vendor.getValue({
-                        fieldId: 'custentity_gd_co_responsabilidad_fiscal'
-                    }),
-                regimenFiscalSuiteTaxLatam:
-                    vendor.getValue({
-                        fieldId: 'custentity_fte_entity_l_taxregime'
-                    })
-            }
-        });
-
-        vendor.save({
-            enableSourcing: false,
-            ignoreMandatoryFields: true
-        });
-
-        log.audit({
-            title: 'Proveedor existente actualizado Colombia',
-            details: {
-                vendorId,
-                supplierTaxId:
-                    data.supplierTaxId
-            }
-        });
-
-        return vendorId;
-    };
-
-
-    const createVendor = data => {
-
-        const countryCode = cleanText(
-            data.countryCode
-        ).toUpperCase();
-
-        const supplierTaxId = normalizeTaxId(
-            data.supplierTaxId
-        );
-
-        /*
-         * Antes de crear, se valida nuevamente por RFC/RUC/NIT
-         * en la sublista Registros fiscales. La razón social no
-         * determina si el proveedor ya existe.
-         */
-        const existingVendor = findVendor(
-            countryCode,
-            supplierTaxId
-        );
-
-        if (existingVendor) {
-
-            log.audit({
-                title: 'Proveedor existente validado por registro fiscal',
-                details: {
-                    vendorId: existingVendor,
-                    countryCode,
-                    supplierTaxId,
-                    companyNameXML: data.supplierName
-                }
-            });
-
-            return existingVendor;
-        }
-
-        if (!['MX', 'PE', 'CO'].includes(countryCode)) {
-            throw new Error(
-                `No existe configuración para crear proveedores del país ${countryCode}.`
-            );
-        }
-
-        if (!supplierTaxId) {
-            throw new Error(
-                'El XML no contiene una identificación fiscal válida para crear el proveedor.'
-            );
-        }
-
-        if (!data.subsidiaryId) {
-            throw new Error(
-                'No se pudo determinar la subsidiaria para crear el proveedor.'
-            );
-        }
-
-        const vendor = record.create({
-            type: record.Type.VENDOR,
-            isDynamic: true
-        });
-
-        const vendorCustomForms = {
-            PE: 64,
-            CO: 66
-        };
-
-        const customFormId = vendorCustomForms[countryCode];
-
-        if (customFormId) {
-            vendor.setValue({
-                fieldId: 'customform',
-                value: customFormId
-            });
-        }
-
-        /*
-         * Datos principales.
-         */
-        vendor.setValue({
-            fieldId: 'companyname',
-            value:
-                cleanText(data.supplierName) ||
-                supplierTaxId
-        });
-
-        vendor.setValue({
-            fieldId: 'subsidiary',
-            value: Number(data.subsidiaryId)
-        });
-
-        /*
-         * México:
-         * Conservamos también el campo tradicional RFC porque la
-         * localización mexicana puede seguir validándolo.
-         */
-        if (countryCode === 'MX') {
-            vendor.setValue({
-                fieldId: 'custentity_mx_rfc',
-                value: supplierTaxId
-            });
-
-            const assignedRfc = normalizeTaxId(
-                vendor.getValue({
-                    fieldId: 'custentity_mx_rfc'
-                })
-            );
-
-            if (!assignedRfc) {
-                throw new Error(
-                    `No fue posible asignar el RFC ${supplierTaxId} ` +
-                    'al campo custentity_mx_rfc.'
-                );
-            }
-        }
-
-
-        // ============================================================
-        // PERÚ - CAMPOS BASE DEL PROVEEDOR
-        // ============================================================
-
-        if (countryCode === 'PE') {
-
-            vendor.setText({
-                fieldId: 'custentity_gd_pais',
-                text: 'Peru'
-            });
-
-            // ========================================================
-            // TIPO DE PERSONA
-            // ========================================================
-
-            // ========================================================
-            // TIPO DE PERSONA
-            // ========================================================
-
-            let tipoPersonaId = null;
-
-            switch (String(data.schemeID)) {
+            switch (String(schemeID)) {
 
                 case "6":
-                    // RUC - Persona Jurídica
+                    // Persona Jurídica RUC
                     tipoPersonaId = "2";
                     break;
 
@@ -5711,185 +5083,1177 @@ define([
                     break;
 
                 default:
-                    // Extranjero
                     tipoPersonaId = "3";
                     break;
             }
 
 
             log.audit({
-                title: 'DEBUG Tipo Persona Perú - Nuevo proveedor',
+                title: "Tipo Persona Perú - ID asignado",
                 details: {
-                    countryCode,
-                    schemeID: data.schemeID,
-                    tipoPersonaId
+                    vendorId: vendorId,
+                    schemeID: schemeID,
+                    internalId: tipoPersonaId
                 }
             });
 
 
+            var vendor = record.load({
+                type: record.Type.VENDOR,
+                id: vendorId
+            });
+
+
             vendor.setValue({
-                fieldId: 'custentity_gd_pe_type_of_person',
+                fieldId: "custentity_gd_pe_type_of_person",
                 value: tipoPersonaId
             });
 
-            // ========================================================
-            // PAÍS DEL DOCUMENTO
-            // ========================================================
-
-            vendor.setText({
-                fieldId: 'custentity_gd_pais_documento',
-                text: 'Peru'
-            });
-
-            // ========================================================
-            // TIPO DE DOCUMENTO
-            // ========================================================
-
-            const tipoDocumentoId =
-                getTipoDocumentoPeru(
-                    data.supplierDocumentTypeCode
-                );
-
             vendor.setValue({
-                fieldId: 'custentity_gd_pe_documento_identidad',
-                value: tipoDocumentoId
+                fieldId: "custentity_fte_entity_l_taxregime",
+                value: '4'
             });
 
             log.audit({
-                title: 'Datos fiscales Perú asignados al proveedor',
+                title: "Régimen fiscal SuiteTax Latam actualizado Perú",
                 details: {
-                    custentity_gd_pais: 'Peru',
-                    custentity_gd_pais_documento: 'Peru',
-                    schemeID: data.schemeID,
-                    tipoPersonaId,
-                    codigoDocumentoXML: data.supplierDocumentTypeCode,
-                    tipoDocumentoInternalId: tipoDocumentoId,
-                    campoTipoDocumento: 'custentity_gd_pe_documento_identidad',
-                    campoTipoPersona: 'custentity_gd_pe_type_of_person'
+                    vendorId: vendorId,
+                    fieldId: "custentity_fte_entity_l_taxregime",
+                    value: '4'
                 }
             });
+
+
+            let vendorSave = vendor.save({
+                ignoreMandatoryFields: true
+            });
+
+
+            log.audit({
+                title: "Tipo Persona Perú actualizado",
+                details: {
+                    vendorId: vendorId,
+                    valorGuardado: tipoPersonaId
+                }
+            });
+
+            return vendorSave
+        } catch (functionError) {
+            logFunctionError('updateVendorPeruTypeOfPerson', functionError);
+            throw functionError;
         }
+    }
 
-        // ============================================================
-        // COLOMBIA - CAMPOS DE LOCALIZACIÓN DEL PROVEEDOR
-        // ============================================================
+    const getColombiaStateCandidates = stateName => {
+        try {
 
-        if (countryCode === 'CO') {
+            const raw =
+                cleanText(stateName);
+
+            const normalized =
+                raw
+                    .toUpperCase()
+                    .normalize('NFD')
+                    .replace(/[\u0300-\u036f]/g, '')
+                    .replace(/[.,]/g, '')
+                    .replace(/\s+/g, ' ')
+                    .trim();
+
+            const aliases = {
+                'BOGOTA': [
+                    'Bogotá D.C.',
+                    'Bogota D.C.',
+                    'Bogotá',
+                    'Bogota'
+                ],
+                'BOGOTA DC': [
+                    'Bogotá D.C.',
+                    'Bogota D.C.',
+                    'Bogotá',
+                    'Bogota'
+                ],
+                'NORTE DE SANTANDER': [
+                    'Norte De Santander',
+                    'Norte de Santander'
+                ],
+                'VALLE DEL CAUCA': [
+                    'Valle Del Cauca',
+                    'Valle del Cauca'
+                ],
+                'SAN ANDRES': [
+                    'San Andrés',
+                    'San Andres'
+                ]
+            };
+
+            return [
+                ...(aliases[normalized] || []),
+                raw
+            ].filter(Boolean);
+        } catch (functionError) {
+            logFunctionError('getColombiaStateCandidates', functionError);
+            throw functionError;
+        }
+    };
+
+
+    const getColombiaCityCandidates = cityName => {
+        try {
+
+            const raw =
+                cleanText(cityName);
+
+            if (!raw) {
+                return [];
+            }
+
+            /*
+             * La ciudad se toma exclusivamente de cbc:CityName.
+             * No usamos cbc:ID (código DANE) para seleccionar GD CIUDAD.
+             *
+             * Se agregan variantes sólo para tolerar diferencias de puntuación
+             * del catálogo de NetSuite.
+             */
+            return [
+                // NetSuite puede tener "Bogotá D.C." mientras DIAN envía
+                // "Bogotá, D.C.". Probamos primero la variante sin coma.
+                raw.replace(/,\s*/g, ' '),
+                raw,
+                raw.replace(/\./g, ''),
+                raw.replace(/,\s*/g, ' ').replace(/\./g, '')
+            ].filter(Boolean);
+        } catch (functionError) {
+            logFunctionError('getColombiaCityCandidates', functionError);
+            throw functionError;
+        }
+    };
+
+
+    const getColombiaDocumentTypeCandidates = code => {
+        try {
+
+            const normalized =
+                cleanText(code).toUpperCase();
+
+            const map = {
+                '11': ['Registro civil'],
+                '12': ['Tarjeta de identidad'],
+                '13': ['Cédula de ciudadanía', 'Cedula de ciudadania'],
+                '21': ['Tarjeta de extranjería', 'Tarjeta de extranjeria'],
+                '22': ['Cédula de extranjería', 'Cedula de extranjeria'],
+                '31': ['NIT'],
+                '41': ['Pasaporte'],
+                '42': ['Documento de identificación extranjero', 'Documento de identificacion extranjero'],
+                '47': ['PEP'],
+                '48': ['PPT'],
+                '50': ['NIT de otro país', 'NIT de otro pais']
+            };
+
+            return [
+                ...(map[normalized] || []),
+                normalized
+            ].filter(Boolean);
+        } catch (functionError) {
+            logFunctionError('getColombiaDocumentTypeCandidates', functionError);
+            throw functionError;
+        }
+    };
+
+
+    const setColombiaRegimenFiscal = (vendor, data) => {
+        try {
+
+            const responsibility =
+                cleanText(
+                    data.supplierFiscalResponsibility
+                ).toUpperCase();
+
+            const regime =
+                cleanText(
+                    data.supplierFiscalRegime
+                )
+                    .toUpperCase()
+                    .normalize('NFD')
+                    .replace(/[\u0300-\u036f]/g, '');
+
+            /*
+             * Catálogo confirmado en esta cuenta:
+             * 1 = Régimen Ordinario
+             * 2 = Régimen Simple
+             */
+            let internalId = '';
+
+            if (
+                /^(?:O|0)-47$/i.test(responsibility) ||
+                regime.includes('SIMPLE') ||
+                regime.includes('RST')
+            ) {
+                internalId = '2';
+            } else if (
+                regime === 'IVA' ||
+                regime.includes('ORDINARIO') ||
+                responsibility
+            ) {
+                internalId = '1';
+            }
+
+            if (!internalId) {
+                return false;
+            }
+
+            vendor.setValue({
+                fieldId:
+                    'custentity_gd_co_regimen_fiscal',
+                value:
+                    internalId
+            });
+
+            log.audit({
+                title:
+                    'Régimen fiscal Colombia asignado por ID confirmado',
+                details: {
+                    xmlRegime:
+                        data.supplierFiscalRegime,
+                    xmlResponsibility:
+                        data.supplierFiscalResponsibility,
+                    internalId
+                }
+            });
+
+            return true;
+        } catch (functionError) {
+            logFunctionError('setColombiaRegimenFiscal', functionError);
+            throw functionError;
+        }
+    };
+
+
+    const setColombiaResponsabilidadFiscal = (vendor, value) => {
+        try {
+
+            const raw =
+                cleanText(value);
+
+            const normalized =
+                raw
+                    .toUpperCase()
+                    .normalize('NFD')
+                    .replace(/[\u0300-\u036f]/g, '')
+                    .replace(/\s+/g, '')
+                    .replace(/_/g, '-');
+
+            /*
+             * Catálogo confirmado en esta cuenta:
+             * 1 = 0-13 Gran Contribuyente
+             * 2 = 0-15 Autorretenedor
+             * 3 = 0-23 Agente de retención IVA
+             * 4 = 0-47 Régimen simple de tributación
+             * 5 = R-99 PN No aplica - Otros
+             */
+            const map = {
+                'O-13': '1',
+                '0-13': '1',
+
+                'O-15': '2',
+                '0-15': '2',
+
+                'O-23': '3',
+                '0-23': '3',
+
+                'O-47': '4',
+                '0-47': '4',
+
+                'R-99-PN': '5',
+                'R-99PN': '5',
+                'R-99': '5'
+            };
+
+            const internalId =
+                map[normalized] || '';
+
+            if (!internalId) {
+
+                log.error({
+                    title:
+                        'Responsabilidad fiscal Colombia sin mapeo',
+                    details: {
+                        xmlValue:
+                            raw
+                    }
+                });
+
+                return false;
+            }
+
+            vendor.setValue({
+                fieldId:
+                    'custentity_gd_co_responsabilidad_fiscal',
+                value:
+                    internalId
+            });
+
+            log.audit({
+                title:
+                    'Responsabilidad fiscal Colombia asignada por ID confirmado',
+                details: {
+                    xmlValue:
+                        raw,
+                    internalId
+                }
+            });
+
+            return true;
+        } catch (functionError) {
+            logFunctionError('setColombiaResponsabilidadFiscal', functionError);
+            throw functionError;
+        }
+    };
+
+
+    const getColombiaFiscalRegimeCandidates = value => {
+        try {
+
+            const raw =
+                cleanText(value);
+
+            const normalized =
+                raw
+                    .toUpperCase()
+                    .normalize('NFD')
+                    .replace(/[\u0300-\u036f]/g, '')
+                    .replace(/\s+/g, ' ')
+                    .trim();
+
+            /*
+             * IMPORTANTE:
+             * PartyTaxScheme/TaxScheme/Name en DIAN describe el impuesto
+             * (por ejemplo "IVA"), no necesariamente el régimen fiscal
+             * del proveedor.
+             *
+             * En esta cuenta NetSuite, el catálogo del campo es:
+             * 1 = Régimen Ordinario
+             * 2 = Régimen Simple
+             *
+             * Si el XML trae "IVA", no existe una equivalencia directa.
+             * Para responsabilidad O-47/RST podemos inferir Régimen Simple.
+             * En los demás casos usamos Régimen Ordinario como regla
+             * configurable de esta implementación.
+             */
+            if (
+                normalized.includes('SIMPLE') ||
+                normalized.includes('RST')
+            ) {
+                return [
+                    'Régimen Simple',
+                    'Regimen Simple'
+                ];
+            }
+
+            if (
+                normalized === 'IVA' ||
+                normalized.includes('ORDINARIO')
+            ) {
+                return [
+                    'Régimen Ordinario',
+                    'Regimen Ordinario'
+                ];
+            }
+
+            return raw
+                ? [raw]
+                : [];
+        } catch (functionError) {
+            logFunctionError('getColombiaFiscalRegimeCandidates', functionError);
+            throw functionError;
+        }
+    };
+
+
+    const getColombiaFiscalResponsibilityCandidates = value => {
+        try {
+
+            const raw =
+                cleanText(value);
+
+            const normalized =
+                raw
+                    .toUpperCase()
+                    .normalize('NFD')
+                    .replace(/[\u0300-\u036f]/g, '')
+                    .replace(/\s+/g, '')
+                    .replace(/_/g, '-');
+
+            /*
+             * DIAN -> catálogo real de NetSuite.
+             *
+             * En varios XML DIAN el código puede venir con letra O:
+             * O-13, O-15, O-23, O-47.
+             *
+             * El catálogo de esta cuenta está visible con cero:
+             * 0-13, 0-15, 0-23, 0-47.
+             */
+            const map = {
+                'R-99-PN': [
+                    'R-99 PN No aplica - Otros*',
+                    'R-99 PN No aplica - Otros',
+                    'R-99 PN',
+                    'R-99'
+                ],
+                'R-99PN': [
+                    'R-99 PN No aplica - Otros*',
+                    'R-99 PN No aplica - Otros',
+                    'R-99 PN',
+                    'R-99'
+                ],
+
+                'O-13': [
+                    '0-13 - Gran Contribuyente',
+                    'O-13 - Gran Contribuyente',
+                    '0-13',
+                    'O-13'
+                ],
+                '0-13': [
+                    '0-13 - Gran Contribuyente',
+                    '0-13'
+                ],
+
+                'O-15': [
+                    '0-15 - Autorretenedor',
+                    'O-15 - Autorretenedor',
+                    '0-15',
+                    'O-15'
+                ],
+                '0-15': [
+                    '0-15 - Autorretenedor',
+                    '0-15'
+                ],
+
+                'O-23': [
+                    '0-23 - Agente de retención IVA',
+                    '0-23 - Agente de retencion IVA',
+                    'O-23 - Agente de retención IVA',
+                    '0-23',
+                    'O-23'
+                ],
+                '0-23': [
+                    '0-23 - Agente de retención IVA',
+                    '0-23 - Agente de retencion IVA',
+                    '0-23'
+                ],
+
+                'O-47': [
+                    '0-47 - Régimen simple de tributación',
+                    '0-47 - Regimen simple de tributacion',
+                    'O-47 - Régimen simple de tributación',
+                    '0-47',
+                    'O-47'
+                ],
+                '0-47': [
+                    '0-47 - Régimen simple de tributación',
+                    '0-47 - Regimen simple de tributacion',
+                    '0-47'
+                ]
+            };
+
+            return [
+                ...(map[normalized] || []),
+                raw
+            ].filter(Boolean);
+        } catch (functionError) {
+            logFunctionError('getColombiaFiscalResponsibilityCandidates', functionError);
+            throw functionError;
+        }
+    };
+
+
+    const applyVendorColombiaFields = (
+        vendor,
+        data,
+        options = {}
+    ) => {
+        try {
+
+            const countryCode =
+                cleanText(data.countryCode).toUpperCase();
+
+            const updateCompanyName =
+                options.updateCompanyName !== false;
+
+            if (countryCode !== 'CO') {
+                return;
+            }
+
+            const legalName =
+                cleanText(
+                    data.supplierLegalName ||
+                    data.supplierName
+                );
+
+            const commercialName =
+                cleanText(
+                    data.supplierCommercialName ||
+                    legalName
+                );
+
+            const documentNumber =
+                normalizeTaxId(
+                    data.supplierTaxId
+                );
+
+            /*
+             * En proveedor EXISTENTE no modificamos companyname.
+             *
+             * NetSuite puede volver a generar/validar el Entity ID al cambiar
+             * companyname y lanzar DUP_VENDOR_NAME aunque el proveedor correcto
+             * ya haya sido localizado por NIT en taxregistration.
+             *
+             * El nombre legal del XML sí se usa al CREAR un proveedor nuevo.
+             */
+            if (
+                updateCompanyName &&
+                legalName
+            ) {
+                safeSetValue(
+                    vendor,
+                    'companyname',
+                    legalName
+                );
+            }
+
+            safeSetValue(
+                vendor,
+                'custentity_gd_nombre_comercial',
+                commercialName
+            );
+
+            safeSetValue(
+                vendor,
+                'custentity_gd_documento',
+                documentNumber
+            );
+
+            safeSetValue(
+                vendor,
+                'custentity_gd_digito_de_verificacion',
+                data.supplierVerificationDigit
+            );
+
+            /*
+             * País y país del documento:
+             * sólo asignamos la selección Colombia.
+             * NO tocamos GD CODIGO PAIS ni GD CODIGO DEL ESTADO.
+             */
+            setSelectByCandidates(
+                vendor,
+                'custentity_gd_pais',
+                [
+                    data.supplierCountryName,
+                    'Colombia',
+                    data.supplierCountryCode,
+                    'CO'
+                ]
+            );
+
+            setSelectByCandidates(
+                vendor,
+                'custentity_gd_pais_documento',
+                [
+                    data.supplierCountryName,
+                    'Colombia',
+                    data.supplierCountryCode,
+                    'CO'
+                ]
+            );
+
+            setSelectByCandidates(
+                vendor,
+                'custentity_gd_tipo_de_documento_de_ident',
+                [
+                    data.supplierDocumentTypeName,
+                    ...getColombiaDocumentTypeCandidates(
+                        data.supplierDocumentTypeCode
+                    )
+                ]
+            );
+
+            /*
+             * Colombia:
+             * - GD ESTADO  <- cbc:CountrySubentity
+             * - GD CIUDAD  <- cbc:CityName
+             *
+             * NO usamos CountrySubentityCode ni Address/ID para seleccionar
+             * estos dos campos.
+             */
+            setSelectByCandidates(
+                vendor,
+                'custentity_gd_estado',
+                getColombiaStateCandidates(
+                    data.supplierStateName
+                )
+            );
+
+            setSelectByCandidates(
+                vendor,
+                'custentity_gd_ciudad',
+                getColombiaCityCandidates(
+                    data.supplierCityName
+                )
+            );
+
+            safeSetValue(
+                vendor,
+                'custentity_gd_codigo_ciudad',
+                data.supplierCityCode
+            );
+
+            safeSetValue(
+                vendor,
+                'custentity_gd_codigo_postal',
+                data.supplierPostalCode
+            );
+
+            /*
+             * NO asignar custentity_gd_co_tipo_de_contribuyente desde
+             * cbc:AdditionalAccountID.
+             *
+             * En DIAN AdditionalAccountID identifica el tipo de organización
+             * jurídica (1 = Persona Jurídica, 2 = Persona Natural), mientras
+             * este campo NetSuite contiene clasificaciones tributarias como
+             * Responsable de IVA, Régimen Simple, Gran Contribuyente, etc.
+             * Son catálogos diferentes.
+             */
+
+            log.audit({
+                title: 'Tipo de contribuyente Colombia no asignado automáticamente',
+                details: {
+                    additionalAccountId:
+                        data.supplierContributorType,
+                    reason:
+                        'AdditionalAccountID DIAN corresponde a tipo de organización jurídica, no al catálogo GD CO Tipo de Contribuyente.'
+                }
+            });
+
+            setColombiaRegimenFiscal(
+                vendor,
+                data
+            );
+
+            setColombiaResponsabilidadFiscal(
+                vendor,
+                data.supplierFiscalResponsibility
+            );
+
+            /*
+             * NO asignar actividad económica desde CorporateRegistrationScheme.
+             * En el XML de prueba el valor es FVP, que corresponde al prefijo
+             * de facturación y no a un código CIIU.
+             */
+            log.audit({
+                title: 'Actividad económica Colombia no asignada automáticamente',
+                details: {
+                    xmlValue:
+                        data.supplierEconomicActivity,
+                    reason:
+                        'CorporateRegistrationScheme del XML analizado contiene el prefijo de facturación, no un código CIIU.'
+                }
+            });
+
+            log.audit({
+                title: 'Datos Colombia preparados para proveedor',
+                details: {
+                    legalName,
+                    commercialName,
+                    documentNumber,
+                    verificationDigit:
+                        data.supplierVerificationDigit,
+                    documentTypeCode:
+                        data.supplierDocumentTypeCode,
+                    documentTypeName:
+                        data.supplierDocumentTypeName,
+                    countryCode:
+                        data.supplierCountryCode,
+                    stateCode:
+                        data.supplierStateCode,
+                    stateName:
+                        data.supplierStateName,
+                    cityCode:
+                        data.supplierCityCode,
+                    cityName:
+                        data.supplierCityName,
+                    postalCode:
+                        data.supplierPostalCode,
+                    contributorType:
+                        data.supplierContributorType,
+                    fiscalRegime:
+                        data.supplierFiscalRegime,
+                    fiscalResponsibility:
+                        data.supplierFiscalResponsibility,
+                    economicActivity:
+                        data.supplierEconomicActivity
+                }
+            });
+        } catch (functionError) {
+            logFunctionError('applyVendorColombiaFields', functionError);
+            throw functionError;
+        }
+    };
+
+
+    const updateVendorColombia = (vendorId, data) => {
+        try {
+
+            if (
+                !vendorId ||
+                cleanText(data.countryCode).toUpperCase() !== 'CO'
+            ) {
+                return vendorId;
+            }
+
+            const vendor = record.load({
+                type: record.Type.VENDOR,
+                id: vendorId,
+                isDynamic: false
+            });
+
             applyVendorColombiaFields(
                 vendor,
                 data,
                 {
-                    updateCompanyName: true
+                    updateCompanyName: false
                 }
             );
-        }
 
-        // ============================================================
-        // RÉGIMEN FISCAL SUITETAX LATAM
-        // ============================================================
-
-        if (countryCode === 'CO') {
             vendor.setValue({
                 fieldId: 'custentity_fte_entity_l_taxregime',
                 value: '15'
             });
 
             log.audit({
-                title: 'Régimen fiscal SuiteTax Latam asignado Colombia',
+                title: 'Régimen fiscal SuiteTax Latam actualizado Colombia',
                 details: {
+                    vendorId,
                     fieldId: 'custentity_fte_entity_l_taxregime',
                     value: '15'
                 }
             });
-        }
 
-        if (countryCode === 'PE') {
-            vendor.setValue({
-                fieldId: 'custentity_fte_entity_l_taxregime',
-                value: '4'
+
+            log.audit({
+                title: 'Colombia - valores antes de guardar proveedor',
+                details: {
+                    vendorId,
+                    entityId:
+                        vendor.getValue({
+                            fieldId: 'entityid'
+                        }),
+                    companyNameActual:
+                        vendor.getValue({
+                            fieldId: 'companyname'
+                        }),
+                    companyNameXML:
+                        data.supplierLegalName ||
+                        data.supplierName ||
+                        '',
+                    pais:
+                        vendor.getValue({
+                            fieldId: 'custentity_gd_pais'
+                        }),
+                    paisDocumento:
+                        vendor.getValue({
+                            fieldId: 'custentity_gd_pais_documento'
+                        }),
+                    tipoDocumento:
+                        vendor.getValue({
+                            fieldId: 'custentity_gd_tipo_de_documento_de_ident'
+                        }),
+                    documento:
+                        vendor.getValue({
+                            fieldId: 'custentity_gd_documento'
+                        }),
+                    digitoVerificacion:
+                        vendor.getValue({
+                            fieldId: 'custentity_gd_digito_de_verificacion'
+                        }),
+                    estado:
+                        vendor.getValue({
+                            fieldId: 'custentity_gd_estado'
+                        }),
+                    ciudad:
+                        vendor.getValue({
+                            fieldId: 'custentity_gd_ciudad'
+                        }),
+                    codigoCiudad:
+                        vendor.getValue({
+                            fieldId: 'custentity_gd_codigo_ciudad'
+                        }),
+                    regimenFiscal:
+                        vendor.getValue({
+                            fieldId: 'custentity_gd_co_regimen_fiscal'
+                        }),
+                    responsabilidadFiscal:
+                        vendor.getValue({
+                            fieldId: 'custentity_gd_co_responsabilidad_fiscal'
+                        }),
+                    regimenFiscalSuiteTaxLatam:
+                        vendor.getValue({
+                            fieldId: 'custentity_fte_entity_l_taxregime'
+                        })
+                }
+            });
+
+            vendor.save({
+                enableSourcing: false,
+                ignoreMandatoryFields: true
             });
 
             log.audit({
-                title: 'Régimen fiscal SuiteTax Latam asignado Perú',
+                title: 'Proveedor existente actualizado Colombia',
                 details: {
-                    fieldId: 'custentity_fte_entity_l_taxregime',
-                    value: '4'
+                    vendorId,
+                    supplierTaxId:
+                        data.supplierTaxId
                 }
             });
+
+            return vendorId;
+        } catch (functionError) {
+            logFunctionError('updateVendorColombia', functionError);
+            throw functionError;
         }
+    };
 
 
-        /*
-         * México, Perú y Colombia:
-         * Agregamos la identificación en la subficha Registros fiscales.
-         */
-        addVendorTaxRegistration(
-            vendor,
-            countryCode,
-            supplierTaxId
-        );
+    const createVendor = data => {
+        try {
 
-        const taxRegistrationCount =
-            vendor.getLineCount({
-                sublistId: 'taxregistration'
-            });
+            const countryCode = cleanText(
+                data.countryCode
+            ).toUpperCase();
 
-        if (!taxRegistrationCount) {
-            throw new Error(
-                `No se creó el registro fiscal ${supplierTaxId} ` +
-                `para el país ${countryCode}.`
+            const supplierTaxId = normalizeTaxId(
+                data.supplierTaxId
             );
-        }
 
-        const vendorId = vendor.save({
-            enableSourcing: true,
-            ignoreMandatoryFields: true
-        });
+            /*
+             * Antes de crear, se valida nuevamente por RFC/RUC/NIT
+             * en la sublista Registros fiscales. La razón social no
+             * determina si el proveedor ya existe.
+             */
+            const existingVendor = findVendor(
+                countryCode,
+                supplierTaxId
+            );
 
-        /*
-         * Cuenta bancaria.
-         */
-        if (data.bankAccount) {
-            const bank = record.create({
-                type: 'customrecord_ce_cue_ent',
+            if (existingVendor) {
+
+                log.audit({
+                    title: 'Proveedor existente validado por registro fiscal',
+                    details: {
+                        vendorId: existingVendor,
+                        countryCode,
+                        supplierTaxId,
+                        companyNameXML: data.supplierName
+                    }
+                });
+
+                return existingVendor;
+            }
+
+            if (!['MX', 'PE', 'CO'].includes(countryCode)) {
+                throw new Error(
+                    `No existe configuración para crear proveedores del país ${countryCode}.`
+                );
+            }
+
+            if (!supplierTaxId) {
+                throw new Error(
+                    'El XML no contiene una identificación fiscal válida para crear el proveedor.'
+                );
+            }
+
+            if (!data.subsidiaryId) {
+                throw new Error(
+                    'No se pudo determinar la subsidiaria para crear el proveedor.'
+                );
+            }
+
+            const vendor = record.create({
+                type: record.Type.VENDOR,
                 isDynamic: true
             });
 
-            safeSetValue(
-                bank,
-                'custrecord_ce_cue_ent_entidad',
-                vendorId
-            );
+            const vendorCustomForms = {
+                PE: 64,
+                CO: 66
+            };
 
-            safeSetValue(
-                bank,
-                'custrecord_ce_cue_ent_cuenta',
-                data.bankAccount
-            );
+            const customFormId = vendorCustomForms[countryCode];
 
-            safeSetValue(
-                bank,
-                'custrecord_ce_cue_ent_banco_nal',
-                data.bankId
-            );
-
-            bank.save({
-                enableSourcing: true,
-                ignoreMandatoryFields: false
-            });
-        }
-
-        log.audit({
-            title: 'Proveedor creado',
-            details: {
-                vendorId,
-                countryCode,
-                supplierTaxId,
-                subsidiaryId: data.subsidiaryId
+            if (customFormId) {
+                vendor.setValue({
+                    fieldId: 'customform',
+                    value: customFormId
+                });
             }
-        });
 
-        return vendorId;
+            /*
+             * Datos principales.
+             */
+            vendor.setValue({
+                fieldId: 'companyname',
+                value:
+                    cleanText(data.supplierName) ||
+                    supplierTaxId
+            });
+
+            vendor.setValue({
+                fieldId: 'subsidiary',
+                value: Number(data.subsidiaryId)
+            });
+
+            /*
+             * México:
+             * Conservamos también el campo tradicional RFC porque la
+             * localización mexicana puede seguir validándolo.
+             */
+            if (countryCode === 'MX') {
+                vendor.setValue({
+                    fieldId: 'custentity_mx_rfc',
+                    value: supplierTaxId
+                });
+
+                const assignedRfc = normalizeTaxId(
+                    vendor.getValue({
+                        fieldId: 'custentity_mx_rfc'
+                    })
+                );
+
+                if (!assignedRfc) {
+                    throw new Error(
+                        `No fue posible asignar el RFC ${supplierTaxId} ` +
+                        'al campo custentity_mx_rfc.'
+                    );
+                }
+            }
+
+
+            // ============================================================
+            // PERÚ - CAMPOS BASE DEL PROVEEDOR
+            // ============================================================
+
+            if (countryCode === 'PE') {
+
+                vendor.setText({
+                    fieldId: 'custentity_gd_pais',
+                    text: 'Peru'
+                });
+
+                // ========================================================
+                // TIPO DE PERSONA
+                // ========================================================
+
+                // ========================================================
+                // TIPO DE PERSONA
+                // ========================================================
+
+                let tipoPersonaId = null;
+
+                switch (String(data.schemeID)) {
+
+                    case "6":
+                        // RUC - Persona Jurídica
+                        tipoPersonaId = "2";
+                        break;
+
+                    case "1":
+                        // Persona Natural
+                        tipoPersonaId = "1";
+                        break;
+
+                    default:
+                        // Extranjero
+                        tipoPersonaId = "3";
+                        break;
+                }
+
+
+                log.audit({
+                    title: 'DEBUG Tipo Persona Perú - Nuevo proveedor',
+                    details: {
+                        countryCode,
+                        schemeID: data.schemeID,
+                        tipoPersonaId
+                    }
+                });
+
+
+                vendor.setValue({
+                    fieldId: 'custentity_gd_pe_type_of_person',
+                    value: tipoPersonaId
+                });
+
+                // ========================================================
+                // PAÍS DEL DOCUMENTO
+                // ========================================================
+
+                vendor.setText({
+                    fieldId: 'custentity_gd_pais_documento',
+                    text: 'Peru'
+                });
+
+                // ========================================================
+                // TIPO DE DOCUMENTO
+                // ========================================================
+
+                const tipoDocumentoId =
+                    getTipoDocumentoPeru(
+                        data.supplierDocumentTypeCode
+                    );
+
+                vendor.setValue({
+                    fieldId: 'custentity_gd_pe_documento_identidad',
+                    value: tipoDocumentoId
+                });
+
+                log.audit({
+                    title: 'Datos fiscales Perú asignados al proveedor',
+                    details: {
+                        custentity_gd_pais: 'Peru',
+                        custentity_gd_pais_documento: 'Peru',
+                        schemeID: data.schemeID,
+                        tipoPersonaId,
+                        codigoDocumentoXML: data.supplierDocumentTypeCode,
+                        tipoDocumentoInternalId: tipoDocumentoId,
+                        campoTipoDocumento: 'custentity_gd_pe_documento_identidad',
+                        campoTipoPersona: 'custentity_gd_pe_type_of_person'
+                    }
+                });
+            }
+
+            // ============================================================
+            // COLOMBIA - CAMPOS DE LOCALIZACIÓN DEL PROVEEDOR
+            // ============================================================
+
+            if (countryCode === 'CO') {
+                applyVendorColombiaFields(
+                    vendor,
+                    data,
+                    {
+                        updateCompanyName: true
+                    }
+                );
+            }
+
+            // ============================================================
+            // RÉGIMEN FISCAL SUITETAX LATAM
+            // ============================================================
+
+            if (countryCode === 'CO') {
+                vendor.setValue({
+                    fieldId: 'custentity_fte_entity_l_taxregime',
+                    value: '15'
+                });
+
+                log.audit({
+                    title: 'Régimen fiscal SuiteTax Latam asignado Colombia',
+                    details: {
+                        fieldId: 'custentity_fte_entity_l_taxregime',
+                        value: '15'
+                    }
+                });
+            }
+
+            if (countryCode === 'PE') {
+                vendor.setValue({
+                    fieldId: 'custentity_fte_entity_l_taxregime',
+                    value: '4'
+                });
+
+                log.audit({
+                    title: 'Régimen fiscal SuiteTax Latam asignado Perú',
+                    details: {
+                        fieldId: 'custentity_fte_entity_l_taxregime',
+                        value: '4'
+                    }
+                });
+            }
+
+
+            /*
+             * México, Perú y Colombia:
+             * Agregamos la identificación en la subficha Registros fiscales.
+             */
+            addVendorTaxRegistration(
+                vendor,
+                countryCode,
+                supplierTaxId
+            );
+
+            const taxRegistrationCount =
+                vendor.getLineCount({
+                    sublistId: 'taxregistration'
+                });
+
+            if (!taxRegistrationCount) {
+                throw new Error(
+                    `No se creó el registro fiscal ${supplierTaxId} ` +
+                    `para el país ${countryCode}.`
+                );
+            }
+
+            const vendorId = vendor.save({
+                enableSourcing: true,
+                ignoreMandatoryFields: true
+            });
+
+            /*
+             * Cuenta bancaria.
+             */
+            if (data.bankAccount) {
+                const bank = record.create({
+                    type: 'customrecord_ce_cue_ent',
+                    isDynamic: true
+                });
+
+                safeSetValue(
+                    bank,
+                    'custrecord_ce_cue_ent_entidad',
+                    vendorId
+                );
+
+                safeSetValue(
+                    bank,
+                    'custrecord_ce_cue_ent_cuenta',
+                    data.bankAccount
+                );
+
+                safeSetValue(
+                    bank,
+                    'custrecord_ce_cue_ent_banco_nal',
+                    data.bankId
+                );
+
+                bank.save({
+                    enableSourcing: true,
+                    ignoreMandatoryFields: false
+                });
+            }
+
+            log.audit({
+                title: 'Proveedor creado',
+                details: {
+                    vendorId,
+                    countryCode,
+                    supplierTaxId,
+                    subsidiaryId: data.subsidiaryId
+                }
+            });
+
+            return vendorId;
+        } catch (functionError) {
+            logFunctionError('createVendor', functionError);
+            throw functionError;
+        }
     };
 
     // -------------------------------------------------------------------------
@@ -6040,7 +6404,7 @@ define([
         if (!vendorId) throw new Error('No se pudo determinar el proveedor.');
 
         // ============================================================
-        // DISTRIBUCIÓN MULTI-CATEGORÍA
+        // DISTRIBUCIÓN MULTI-LÍNEA
         // ============================================================
 
         const originalTaxes =
@@ -6048,6 +6412,29 @@ define([
                 params.custpage_taxes_json ||
                 '[]'
             );
+
+
+        /*
+         * Tipo de línea elegido en el planificador:
+         * ITEMS    -> sublista item (proceso de artículos).
+         * EXPENSES -> sublista expense (proceso original por categoría).
+         */
+        const lineMode =
+            cleanText(
+                params.custpage_tipo_linea
+            ).toUpperCase();
+
+
+        if (!['ITEMS', 'EXPENSES'].includes(lineMode)) {
+
+            throw new Error(
+                'Selecciona si la factura se registrará por artículos o por gastos.'
+            );
+        }
+
+
+        const isItemMode =
+            lineMode === 'ITEMS';
 
 
         let expenseDistribution = [];
@@ -6071,7 +6458,7 @@ define([
         } catch (error) {
 
             throw new Error(
-                'La distribución de categorías e impuestos contiene información inválida.'
+                'La distribución de líneas e impuestos contiene información inválida.'
             );
         }
 
@@ -6079,464 +6466,471 @@ define([
         if (!expenseDistribution.length) {
 
             throw new Error(
-                'Debes agregar al menos una categoría de gasto.'
+                isItemMode
+                    ? 'Debes agregar al menos un artículo.'
+                    : 'Debes agregar al menos una categoría de gasto.'
             );
         }
 
 
         const buildLineTaxes =
             (distributionLine, lineIndex) => {
+                try {
 
-                const sourceTaxes =
-                    Array.isArray(
-                        distributionLine.taxes
-                    )
-                        ? distributionLine.taxes
-                        : [];
-
-
-                const builtTaxes = sourceTaxes.map(
-                    (tax, taxIndex) => {
-
-                        const source =
-                            cleanText(
-                                tax.source
-                            ).toUpperCase();
+                    const sourceTaxes =
+                        Array.isArray(
+                            distributionLine.taxes
+                        )
+                            ? distributionLine.taxes
+                            : [];
 
 
-                        // ============================================
-                        // IMPUESTO HEREDADO DEL XML
-                        // ============================================
+                    const builtTaxes = sourceTaxes.map(
+                        (tax, taxIndex) => {
 
-                        if (source === 'XML') {
-
-                            const sourceTaxIndex =
-                                Number(
-                                    tax.sourceTaxIndex
-                                );
+                            const source =
+                                cleanText(
+                                    tax.source
+                                ).toUpperCase();
 
 
-                            if (
-                                !Number.isInteger(
+                            // ============================================
+                            // IMPUESTO HEREDADO DEL XML
+                            // ============================================
+
+                            if (source === 'XML') {
+
+                                const sourceTaxIndex =
+                                    Number(
+                                        tax.sourceTaxIndex
+                                    );
+
+
+                                if (
+                                    !Number.isInteger(
+                                        sourceTaxIndex
+                                    ) ||
+                                    sourceTaxIndex < 0 ||
+                                    sourceTaxIndex >=
+                                    originalTaxes.length
+                                ) {
+
+                                    throw new Error(
+                                        `La línea ${lineIndex + 1}, impuesto ${taxIndex + 1}, ` +
+                                        `no corresponde a un impuesto válido del XML.`
+                                    );
+                                }
+
+
+                                const original =
+                                    originalTaxes[
                                     sourceTaxIndex
-                                ) ||
-                                sourceTaxIndex < 0 ||
-                                sourceTaxIndex >=
-                                originalTaxes.length
-                            ) {
-
-                                throw new Error(
-                                    `La línea ${lineIndex + 1}, impuesto ${taxIndex + 1}, ` +
-                                    `no corresponde a un impuesto válido del XML.`
-                                );
-                            }
+                                    ];
 
 
-                            const original =
-                                originalTaxes[
-                                sourceTaxIndex
-                                ];
-
-
-                            const options =
-                                Array.isArray(
-                                    original.taxOptions
-                                )
-                                    ? original.taxOptions
-                                    : [];
-
-
-                            let selectedTaxId =
-                                cleanText(
-                                    tax.taxId ||
-                                    original.taxId
-                                );
-
-
-                            let selectedTaxName =
-                                cleanText(
-                                    tax.taxName ||
-                                    original.taxName
-                                );
-
-
-                            let selectedMappingId =
-                                cleanText(
-                                    original.mappingId
-                                );
-
-
-                            if (options.length > 1) {
-
-                                if (!selectedTaxId) {
-
-                                    throw new Error(
-                                        `Selecciona el código NetSuite para el impuesto ` +
-                                        `${original.authorityCode || original.name || ''} ` +
-                                        `de la categoría ${lineIndex + 1}.`
-                                    );
-                                }
-
-
-                                const selectedOption =
-                                    options.find(
-                                        option =>
-                                            String(
-                                                option.taxId
-                                            ) ===
-                                            String(
-                                                selectedTaxId
-                                            )
-                                    );
-
-
-                                if (!selectedOption) {
-
-                                    throw new Error(
-                                        `El código de impuesto ${selectedTaxId} no pertenece ` +
-                                        `a las opciones del impuesto XML ` +
-                                        `${original.authorityCode || original.name || ''}.`
-                                    );
-                                }
-
-
-                                selectedTaxName =
-                                    selectedOption.taxName ||
-                                    selectedTaxName;
-
-
-                                selectedMappingId =
-                                    selectedOption.mappingId ||
-                                    selectedMappingId;
-                            }
-
-
-                            if (
-                                !selectedTaxId &&
-                                !['EXEMPT', 'UNAFFECTED'].includes(
-                                    original.type
-                                )
-                            ) {
-
-                                throw new Error(
-                                    `El impuesto XML ${original.authorityCode || original.name || ''} ` +
-                                    `de la categoría ${lineIndex + 1} no tiene código NetSuite configurado.`
-                                );
-                            }
-
-
-                            const taxableAmount =
-                                Math.abs(
-                                    toNumber(
-                                        tax.taxableAmount !== undefined &&
-                                            tax.taxableAmount !== null &&
-                                            tax.taxableAmount !== ''
-                                            ? tax.taxableAmount
-                                            : distributionLine.amount
+                                const options =
+                                    Array.isArray(
+                                        original.taxOptions
                                     )
-                                );
+                                        ? original.taxOptions
+                                        : [];
 
 
-                            const rate =
-                                toNumber(
-                                    original.rate
-                                );
-
-
-                            const amount =
-                                ['EXEMPT', 'UNAFFECTED'].includes(
-                                    original.type
-                                )
-                                    ? 0
-                                    : Number(
-                                        (
-                                            taxableAmount *
-                                            (
-                                                rate /
-                                                100
-                                            )
-                                        ).toFixed(2)
+                                let selectedTaxId =
+                                    cleanText(
+                                        tax.taxId ||
+                                        original.taxId
                                     );
 
 
-                            return {
-                                type:
-                                    original.type,
+                                let selectedTaxName =
+                                    cleanText(
+                                        tax.taxName ||
+                                        original.taxName
+                                    );
 
-                                authorityCode:
-                                    original.authorityCode,
 
-                                name:
-                                    original.name,
+                                let selectedMappingId =
+                                    cleanText(
+                                        original.mappingId
+                                    );
 
-                                rate,
 
-                                originalRate:
-                                    original.originalRate,
+                                if (options.length > 1) {
 
-                                taxableAmount,
+                                    if (!selectedTaxId) {
 
-                                amount,
+                                        throw new Error(
+                                            `Selecciona el código NetSuite para el impuesto ` +
+                                            `${original.authorityCode || original.name || ''} ` +
+                                            `de la línea ${lineIndex + 1}.`
+                                        );
+                                    }
 
-                                taxId:
-                                    selectedTaxId,
 
-                                taxName:
-                                    selectedTaxName,
+                                    const selectedOption =
+                                        options.find(
+                                            option =>
+                                                String(
+                                                    option.taxId
+                                                ) ===
+                                                String(
+                                                    selectedTaxId
+                                                )
+                                        );
 
-                                mappingId:
-                                    selectedMappingId,
 
-                                source:
-                                    'XML',
+                                    if (!selectedOption) {
 
-                                manual:
-                                    false
-                            };
+                                        throw new Error(
+                                            `El código de impuesto ${selectedTaxId} no pertenece ` +
+                                            `a las opciones del impuesto XML ` +
+                                            `${original.authorityCode || original.name || ''}.`
+                                        );
+                                    }
+
+
+                                    selectedTaxName =
+                                        selectedOption.taxName ||
+                                        selectedTaxName;
+
+
+                                    selectedMappingId =
+                                        selectedOption.mappingId ||
+                                        selectedMappingId;
+                                }
+
+
+                                if (
+                                    !selectedTaxId &&
+                                    !['EXEMPT', 'UNAFFECTED'].includes(
+                                        original.type
+                                    )
+                                ) {
+
+                                    throw new Error(
+                                        `El impuesto XML ${original.authorityCode || original.name || ''} ` +
+                                        `de la línea ${lineIndex + 1} no tiene código NetSuite configurado.`
+                                    );
+                                }
+
+
+                                const taxableAmount =
+                                    Math.abs(
+                                        toNumber(
+                                            tax.taxableAmount !== undefined &&
+                                                tax.taxableAmount !== null &&
+                                                tax.taxableAmount !== ''
+                                                ? tax.taxableAmount
+                                                : distributionLine.amount
+                                        )
+                                    );
+
+
+                                const rate =
+                                    toNumber(
+                                        original.rate
+                                    );
+
+
+                                const amount =
+                                    ['EXEMPT', 'UNAFFECTED'].includes(
+                                        original.type
+                                    )
+                                        ? 0
+                                        : Number(
+                                            (
+                                                taxableAmount *
+                                                (
+                                                    rate /
+                                                    100
+                                                )
+                                            ).toFixed(2)
+                                        );
+
+
+                                return {
+                                    type:
+                                        original.type,
+
+                                    authorityCode:
+                                        original.authorityCode,
+
+                                    name:
+                                        original.name,
+
+                                    rate,
+
+                                    originalRate:
+                                        original.originalRate,
+
+                                    taxableAmount,
+
+                                    amount,
+
+                                    taxId:
+                                        selectedTaxId,
+
+                                    taxName:
+                                        selectedTaxName,
+
+                                    mappingId:
+                                        selectedMappingId,
+
+                                    source:
+                                        'XML',
+
+                                    manual:
+                                        false
+                                };
+                            }
+
+
+                            // ============================================
+                            // IMPUESTO MANUAL
+                            // ============================================
+
+                            if (source === 'MANUAL') {
+
+                                const taxId =
+                                    cleanText(
+                                        tax.taxId
+                                    );
+
+
+                                if (!taxId) {
+
+                                    throw new Error(
+                                        `La línea ${lineIndex + 1}, impuesto manual ${taxIndex + 1}, ` +
+                                        `no tiene código NetSuite.`
+                                    );
+                                }
+
+
+                                const metadata =
+                                    getManualTaxMetadata(
+                                        invoiceData.countryCode,
+                                        taxId
+                                    );
+
+
+                                const taxableAmount =
+                                    Math.abs(
+                                        toNumber(
+                                            tax.taxableAmount !== undefined &&
+                                                tax.taxableAmount !== null &&
+                                                tax.taxableAmount !== ''
+                                                ? tax.taxableAmount
+                                                : tax.base
+                                        )
+                                    );
+
+
+                                if (taxableAmount <= 0) {
+
+                                    throw new Error(
+                                        `La línea ${lineIndex + 1}, impuesto manual ${taxIndex + 1}, ` +
+                                        `debe tener una base mayor a cero.`
+                                    );
+                                }
+
+
+                                const rate =
+                                    toNumber(
+                                        metadata.rate
+                                    );
+
+
+                                const amount =
+                                    ['EXEMPT', 'UNAFFECTED'].includes(
+                                        metadata.type
+                                    )
+                                        ? 0
+                                        : Number(
+                                            (
+                                                taxableAmount *
+                                                (
+                                                    rate /
+                                                    100
+                                                )
+                                            ).toFixed(2)
+                                        );
+
+
+                                return {
+                                    type:
+                                        metadata.type,
+
+                                    authorityCode:
+                                        metadata.authorityCode ||
+                                        'MANUAL',
+
+                                    name:
+                                        metadata.name ||
+                                        metadata.taxName ||
+                                        'Impuesto manual',
+
+                                    rate,
+
+                                    originalRate:
+                                        String(
+                                            rate
+                                        ),
+
+                                    taxableAmount,
+
+                                    amount,
+
+                                    taxId:
+                                        metadata.taxId,
+
+                                    taxName:
+                                        metadata.taxName,
+
+                                    mappingId:
+                                        metadata.mappingId,
+
+                                    source:
+                                        'MANUAL',
+
+                                    manual:
+                                        true
+                                };
+                            }
+
+
+                            throw new Error(
+                                `La línea ${lineIndex + 1} contiene un impuesto con origen no válido.`
+                            );
                         }
+                    );
 
+                    /*
+                     * NetSuite no permite repetir el mismo Tax Code dentro de
+                     * Tax Details para la misma taxdetailsreference (misma línea
+                     * expense). Si el usuario agrega manualmente un Tax Code que
+                     * ya viene heredado del XML, conservamos el XML y omitimos el
+                     * duplicado manual para no duplicar la retención/impuesto.
+                     */
+                    const uniqueTaxes = [];
+                    const taxIndexById = new Map();
 
-                        // ============================================
-                        // IMPUESTO MANUAL
-                        // ============================================
-
-                        if (source === 'MANUAL') {
+                    builtTaxes.forEach(
+                        tax => {
 
                             const taxId =
                                 cleanText(
                                     tax.taxId
                                 );
 
-
+                            /*
+                             * EXEMPT/UNAFFECTED sin taxId se conservan porque no
+                             * generan la colisión reportada por NetSuite.
+                             */
                             if (!taxId) {
-
-                                throw new Error(
-                                    `La línea ${lineIndex + 1}, impuesto manual ${taxIndex + 1}, ` +
-                                    `no tiene código NetSuite.`
-                                );
+                                uniqueTaxes.push(tax);
+                                return;
                             }
 
-
-                            const metadata =
-                                getManualTaxMetadata(
-                                    invoiceData.countryCode,
-                                    taxId
-                                );
-
-
-                            const taxableAmount =
-                                Math.abs(
-                                    toNumber(
-                                        tax.taxableAmount !== undefined &&
-                                            tax.taxableAmount !== null &&
-                                            tax.taxableAmount !== ''
-                                            ? tax.taxableAmount
-                                            : tax.base
-                                    )
-                                );
-
-
-                            if (taxableAmount <= 0) {
-
-                                throw new Error(
-                                    `La línea ${lineIndex + 1}, impuesto manual ${taxIndex + 1}, ` +
-                                    `debe tener una base mayor a cero.`
-                                );
-                            }
-
-
-                            const rate =
-                                toNumber(
-                                    metadata.rate
-                                );
-
-
-                            const amount =
-                                ['EXEMPT', 'UNAFFECTED'].includes(
-                                    metadata.type
-                                )
-                                    ? 0
-                                    : Number(
-                                        (
-                                            taxableAmount *
-                                            (
-                                                rate /
-                                                100
-                                            )
-                                        ).toFixed(2)
-                                    );
-
-
-                            return {
-                                type:
-                                    metadata.type,
-
-                                authorityCode:
-                                    metadata.authorityCode ||
-                                    'MANUAL',
-
-                                name:
-                                    metadata.name ||
-                                    metadata.taxName ||
-                                    'Impuesto manual',
-
-                                rate,
-
-                                originalRate:
-                                    String(
-                                        rate
-                                    ),
-
-                                taxableAmount,
-
-                                amount,
-
-                                taxId:
-                                    metadata.taxId,
-
-                                taxName:
-                                    metadata.taxName,
-
-                                mappingId:
-                                    metadata.mappingId,
-
-                                source:
-                                    'MANUAL',
-
-                                manual:
-                                    true
-                            };
-                        }
-
-
-                        throw new Error(
-                            `La línea ${lineIndex + 1} contiene un impuesto con origen no válido.`
-                        );
-                    }
-                );
-
-                /*
-                 * NetSuite no permite repetir el mismo Tax Code dentro de
-                 * Tax Details para la misma taxdetailsreference (misma línea
-                 * expense). Si el usuario agrega manualmente un Tax Code que
-                 * ya viene heredado del XML, conservamos el XML y omitimos el
-                 * duplicado manual para no duplicar la retención/impuesto.
-                 */
-                const uniqueTaxes = [];
-                const taxIndexById = new Map();
-
-                builtTaxes.forEach(
-                    tax => {
-
-                        const taxId =
-                            cleanText(
-                                tax.taxId
-                            );
-
-                        /*
-                         * EXEMPT/UNAFFECTED sin taxId se conservan porque no
-                         * generan la colisión reportada por NetSuite.
-                         */
-                        if (!taxId) {
-                            uniqueTaxes.push(tax);
-                            return;
-                        }
-
-                        if (!taxIndexById.has(taxId)) {
-                            taxIndexById.set(
-                                taxId,
-                                uniqueTaxes.length
-                            );
-
-                            uniqueTaxes.push(tax);
-                            return;
-                        }
-
-                        const existingIndex =
-                            taxIndexById.get(taxId);
-
-                        const existing =
-                            uniqueTaxes[
-                            existingIndex
-                            ];
-
-                        const existingSource =
-                            cleanText(
-                                existing.source
-                            ).toUpperCase();
-
-                        const incomingSource =
-                            cleanText(
-                                tax.source
-                            ).toUpperCase();
-
-                        /*
-                         * XML tiene prioridad sobre MANUAL. El caso que
-                         * originó el USER_ERROR fue exactamente XML 1309 +
-                         * MANUAL 1309 en la misma línea.
-                         */
-                        if (
-                            existingSource === 'XML' &&
-                            incomingSource === 'MANUAL'
-                        ) {
-
-                            log.audit({
-                                title:
-                                    'Impuesto manual duplicado omitido',
-
-                                details: {
-                                    lineIndex,
+                            if (!taxIndexById.has(taxId)) {
+                                taxIndexById.set(
                                     taxId,
-                                    keptSource:
-                                        existingSource,
-                                    omittedSource:
-                                        incomingSource,
-                                    taxableAmount:
-                                        tax.taxableAmount,
-                                    amount:
-                                        tax.amount
-                                }
-                            });
+                                    uniqueTaxes.length
+                                );
 
-                            return;
-                        }
+                                uniqueTaxes.push(tax);
+                                return;
+                            }
 
-                        if (
-                            existingSource === 'MANUAL' &&
-                            incomingSource === 'XML'
-                        ) {
+                            const existingIndex =
+                                taxIndexById.get(taxId);
 
-                            uniqueTaxes[
+                            const existing =
+                                uniqueTaxes[
                                 existingIndex
-                            ] = tax;
+                                ];
 
-                            log.audit({
-                                title:
-                                    'Impuesto XML reemplazó duplicado manual',
+                            const existingSource =
+                                cleanText(
+                                    existing.source
+                                ).toUpperCase();
 
-                                details: {
-                                    lineIndex,
-                                    taxId
-                                }
-                            });
+                            const incomingSource =
+                                cleanText(
+                                    tax.source
+                                ).toUpperCase();
 
-                            return;
+                            /*
+                             * XML tiene prioridad sobre MANUAL. El caso que
+                             * originó el USER_ERROR fue exactamente XML 1309 +
+                             * MANUAL 1309 en la misma línea.
+                             */
+                            if (
+                                existingSource === 'XML' &&
+                                incomingSource === 'MANUAL'
+                            ) {
+
+                                log.audit({
+                                    title:
+                                        'Impuesto manual duplicado omitido',
+
+                                    details: {
+                                        lineIndex,
+                                        taxId,
+                                        keptSource:
+                                            existingSource,
+                                        omittedSource:
+                                            incomingSource,
+                                        taxableAmount:
+                                            tax.taxableAmount,
+                                        amount:
+                                            tax.amount
+                                    }
+                                });
+
+                                return;
+                            }
+
+                            if (
+                                existingSource === 'MANUAL' &&
+                                incomingSource === 'XML'
+                            ) {
+
+                                uniqueTaxes[
+                                    existingIndex
+                                ] = tax;
+
+                                log.audit({
+                                    title:
+                                        'Impuesto XML reemplazó duplicado manual',
+
+                                    details: {
+                                        lineIndex,
+                                        taxId
+                                    }
+                                });
+
+                                return;
+                            }
+
+                            /*
+                             * Dos XML o dos manuales con el mismo Tax Code dentro
+                             * de la misma categoría son ambiguos. Frenamos antes
+                             * de record.save() con un mensaje entendible.
+                             */
+                            throw new Error(
+                                `La línea ${lineIndex + 1} contiene el Tax Code ` +
+                                `${taxId} más de una vez. Cada Tax Code sólo puede ` +
+                                `aparecer una vez por línea.`
+                            );
                         }
+                    );
 
-                        /*
-                         * Dos XML o dos manuales con el mismo Tax Code dentro
-                         * de la misma categoría son ambiguos. Frenamos antes
-                         * de record.save() con un mensaje entendible.
-                         */
-                        throw new Error(
-                            `La categoría ${lineIndex + 1} contiene el Tax Code ` +
-                            `${taxId} más de una vez. Cada Tax Code sólo puede ` +
-                            `aparecer una vez por línea de gasto.`
-                        );
-                    }
-                );
-
-                return uniqueTaxes;
+                    return uniqueTaxes;
+                } catch (functionError) {
+                    logFunctionError('createVendorBill.buildLineTaxes', functionError);
+                    throw functionError;
+                }
             };
 
 
@@ -6548,10 +6942,20 @@ define([
             expenseDistribution.map(
                 (line, index) => {
 
+                    const itemId =
+                        isItemMode
+                            ? cleanText(
+                                line.itemId
+                            )
+                            : '';
+
+
                     const categoryId =
-                        cleanText(
-                            line.categoryId
-                        );
+                        isItemMode
+                            ? ''
+                            : cleanText(
+                                line.categoryId
+                            );
 
 
                     const amount =
@@ -6562,7 +6966,15 @@ define([
                         );
 
 
-                    if (!categoryId) {
+                    if (isItemMode && !itemId) {
+
+                        throw new Error(
+                            `Selecciona el artículo de la línea ${index + 1}.`
+                        );
+                    }
+
+
+                    if (!isItemMode && !categoryId) {
 
                         throw new Error(
                             `Selecciona la categoría de gasto de la línea ${index + 1}.`
@@ -6582,6 +6994,7 @@ define([
                         amount;
 
 
+                    // Artículos y gastos usan el mismo tratamiento de impuestos.
                     const taxes =
                         buildLineTaxes(
                             {
@@ -6593,7 +7006,12 @@ define([
 
 
                     return {
+                        itemId,
                         categoryId,
+                        appliesIgv:
+                            isItemMode &&
+                            line.appliesIgv === true &&
+                            cleanText(invoiceData.countryCode).toUpperCase() === 'PE',
                         amount,
                         memo:
                             cleanText(
@@ -6626,16 +7044,18 @@ define([
 
             throw new Error(
                 `El subtotal del XML (${subtotal.toFixed(2)}) debe quedar completamente distribuido. ` +
-                `Actualmente las categorías suman ${distributedSubtotal.toFixed(2)}.`
+                `Actualmente ${isItemMode ? 'los artículos' : 'las categorías'} suman ${distributedSubtotal.toFixed(2)}.`
             );
         }
 
 
         log.audit({
             title:
-                'Distribución multi-categoría validada',
+                'Distribución de líneas validada',
 
             details: {
+                lineMode,
+
                 subtotalXml:
                     subtotal,
 
@@ -6873,11 +7293,220 @@ define([
         );
 
         // ============================================================
-        // CREAR UNA LÍNEA EXPENSE POR CADA CATEGORÍA
+        // CREAR UNA LÍNEA POR FILA: ITEM (ARTÍCULOS) O EXPENSE (GASTOS)
         // ============================================================
+
+        // Moneda efectiva de la factura: del formulario o de la fuente del
+        // proveedor cuando este se acaba de crear y el campo llega vacío.
+        const billCurrencyId =
+            bill.getValue({
+                fieldId:
+                    'currency'
+            });
+
+
+        /*
+         * Los rangos de la parametrización de artículos hijo están siempre en
+         * la moneda base (Soles), así que el total se convierte con el tipo de
+         * cambio de la factura, ya calculado por NetSuite para su fecha.
+         * En una factura en Soles el tipo de cambio es 1.
+         */
+        const exchangeRate =
+            toNumber(
+                bill.getValue({
+                    fieldId:
+                        'exchangerate'
+                })
+            );
+
+
+        const totalInBaseCurrency =
+            exchangeRate > 0
+                ? Number(
+                    (
+                        total *
+                        exchangeRate
+                    ).toFixed(2)
+                )
+                : null;
+
+
+        log.audit({
+            title:
+                'Total para parametrización de artículos hijo',
+
+            details: {
+                total,
+                billCurrencyId,
+                exchangeRate,
+                totalInBaseCurrency
+            }
+        });
+
+
+        /*
+         * Línea de artículo: campos propios del artículo, clasificaciones
+         * contables e impuestos del planificador (mismos campos que gastos).
+         * La cuenta contable la determina el artículo.
+         */
+        const addItemLine = (distributionLine, lineIndex) => {
+            try {
+
+                const lineTaxes =
+                    Array.isArray(distributionLine.taxes)
+                        ? distributionLine.taxes
+                        : [];
+
+
+                const lineMainTax =
+                    lineTaxes.find(
+                        tax =>
+                            ['TRANSFER', 'EXEMPT', 'UNAFFECTED'].includes(tax.type) &&
+                            tax.taxId
+                    );
+
+
+                const sumTaxes = types => {
+                    try {
+                        return lineTaxes
+                            .filter(tax => types.includes(tax.type))
+                            .reduce((sum, tax) => sum + toNumber(tax.amount), 0);
+                    } catch (functionError) {
+                        logFunctionError('createVendorBill.addItemLine.sumTaxes', functionError);
+                        throw functionError;
+                    }
+                };
+
+
+                const lineExpectedTotal =
+                    Number(
+                        (
+                            distributionLine.amount +
+                            sumTaxes(['TRANSFER']) -
+                            sumTaxes(['WITHHOLDING', 'DETRACTION'])
+                        ).toFixed(2)
+                    );
+
+
+
+                const childItemId =
+                    distributionLine.appliesIgv
+                        ? findChildItemId({
+                            parentItemId:
+                                distributionLine.itemId,
+
+                            currencyId:
+                                billCurrencyId,
+
+                            totalInBaseCurrency
+                        })
+                        : '';
+
+
+                const billItemId =
+                    childItemId ||
+                    distributionLine.itemId;
+
+
+                bill.selectNewLine({
+                    sublistId:
+                        'item'
+                });
+
+
+                // El artículo primero: su sourcing rellena tarifa y descripción.
+                safeSetCurrentValue(bill, 'item', 'item', billItemId);
+                safeSetCurrentValue(bill, 'item', 'quantity', 1);
+                safeSetCurrentValue(bill, 'item', 'rate', distributionLine.amount);
+                safeSetCurrentValue(bill, 'item', 'amount', distributionLine.amount);
+
+                safeSetCurrentValue(
+                    bill,
+                    'item',
+                    'description',
+                    distributionLine.memo ||
+                    params.custpage_justificacion
+                );
+
+                safeSetCurrentValue(bill, 'item', 'department', params.custpage_departamento);
+                safeSetCurrentValue(bill, 'item', 'location', params.custpage_ubicacion);
+                safeSetCurrentValue(bill, 'item', CONFIG.FIELDS.BRAND_SEGMENT_LINE, brandSegmentId);
+
+
+                // Impuestos: mismos campos de línea que el proceso de gastos.
+                if (lineMainTax) {
+                    safeSetCurrentValue(bill, 'item', CONFIG.FIELDS.TAX_LINE, lineMainTax.taxId);
+                }
+
+                safeSetCurrentValue(bill, 'item', CONFIG.FIELDS.EXPECTED_TOTAL_LINE, lineExpectedTotal);
+
+                safeSetCurrentValue(
+                    bill,
+                    'item',
+                    'custcol_cs_tax_details_json',
+                    JSON.stringify(
+                        lineTaxes.map(
+                            tax => ({
+                                taxId: tax.taxId,
+                                type: tax.type,
+                                rate: tax.rate,
+                                amount: tax.amount,
+                                taxableAmount: tax.taxableAmount,
+                                manual: Boolean(tax.manual)
+                            })
+                        )
+                    )
+                );
+
+
+                log.audit({
+                    title:
+                        `Línea item ${lineIndex + 1} preparada`,
+
+                    details: {
+                        itemId:
+                            distributionLine.itemId,
+
+                        appliesIgv:
+                            distributionLine.appliesIgv,
+
+                        billItemId,
+
+                        amount:
+                            distributionLine.amount,
+
+                        lineExpectedTotal,
+
+                        taxes:
+                            lineTaxes
+                    }
+                });
+
+
+                bill.commitLine({
+                    sublistId:
+                        'item'
+                });
+            } catch (functionError) {
+                logFunctionError('createVendorBill.addItemLine', functionError);
+                throw functionError;
+            }
+        };
+
 
         expenseDistribution.forEach(
             (distributionLine, lineIndex) => {
+
+                if (isItemMode) {
+
+                    addItemLine(
+                        distributionLine,
+                        lineIndex
+                    );
+
+                    return;
+                }
+
 
                 const lineTaxes =
                     Array.isArray(
@@ -7278,86 +7907,106 @@ define([
     // -------------------------------------------------------------------------
 
     const getPlannerHomeUrl = () => {
-        return url.resolveScript({
-            scriptId: 'customscript_cs_sl_planificador_co_pe',
-            deploymentId: 'customdeploy_cs_sl_planificador_co_pe',
-            returnExternalUrl: false
-        });
+        try {
+            return url.resolveScript({
+                scriptId: 'customscript_cs_sl_planificador_co_pe',
+                deploymentId: 'customdeploy_cs_sl_planificador_co_pe',
+                returnExternalUrl: false
+            });
+        } catch (functionError) {
+            logFunctionError('getPlannerHomeUrl', functionError);
+            throw functionError;
+        }
     };
 
     const writeHtml = (context, html) => {
-        context.response.setHeader({
-            name: 'Content-Type',
-            value: 'text/html; charset=UTF-8'
-        });
-        context.response.write({ output: html });
+        try {
+            context.response.setHeader({
+                name: 'Content-Type',
+                value: 'text/html; charset=UTF-8'
+            });
+            context.response.write({ output: html });
+        } catch (functionError) {
+            logFunctionError('writeHtml', functionError);
+            throw functionError;
+        }
     };
 
     const formatHtmlDate = value => {
+        try {
 
-        const normalized =
-            normalizeIssueDate(value);
+            const normalized =
+                normalizeIssueDate(value);
 
-        if (normalized) {
-            return normalized;
+            if (normalized) {
+                return normalized;
+            }
+
+
+            const date =
+                value instanceof Date
+                    ? value
+                    : new Date(value);
+
+
+            if (
+                !date ||
+                Number.isNaN(
+                    date.getTime()
+                )
+            ) {
+                return '';
+            }
+
+
+            const year =
+                date.getFullYear();
+
+            const month =
+                String(
+                    date.getMonth() + 1
+                ).padStart(2, '0');
+
+            const day =
+                String(
+                    date.getDate()
+                ).padStart(2, '0');
+
+
+            return (
+                `${year}-` +
+                `${month}-` +
+                `${day}`
+            );
+        } catch (functionError) {
+            logFunctionError('formatHtmlDate', functionError);
+            throw functionError;
         }
-
-
-        const date =
-            value instanceof Date
-                ? value
-                : new Date(value);
-
-
-        if (
-            !date ||
-            Number.isNaN(
-                date.getTime()
-            )
-        ) {
-            return '';
-        }
-
-
-        const year =
-            date.getFullYear();
-
-        const month =
-            String(
-                date.getMonth() + 1
-            ).padStart(2, '0');
-
-        const day =
-            String(
-                date.getDate()
-            ).padStart(2, '0');
-
-
-        return (
-            `${year}-` +
-            `${month}-` +
-            `${day}`
-        );
     };
 
     const getSearchOptions = (searchObject, valueGetter, textGetter) => {
-        const options = [];
+        try {
+            const options = [];
 
-        searchObject.run().each(result => {
-            const value = valueGetter(result);
-            const text = textGetter(result);
+            searchObject.run().each(result => {
+                const value = valueGetter(result);
+                const text = textGetter(result);
 
-            if (value !== null && value !== undefined && value !== '') {
-                options.push({
-                    value: String(value),
-                    text: cleanText(text) || String(value)
-                });
-            }
+                if (value !== null && value !== undefined && value !== '') {
+                    options.push({
+                        value: String(value),
+                        text: cleanText(text) || String(value)
+                    });
+                }
 
-            return true;
-        });
+                return true;
+            });
 
-        return options;
+            return options;
+        } catch (functionError) {
+            logFunctionError('getSearchOptions', functionError);
+            throw functionError;
+        }
     };
 
     const renderOptions = (
@@ -7365,84 +8014,208 @@ define([
         selectedValue = '',
         placeholder = 'Selecciona una opción'
     ) => {
-        const selected = String(selectedValue || '');
+        try {
+            const selected = String(selectedValue || '');
 
-        return [
-            `<option value="">${escapeHtml(placeholder)}</option>`,
-            ...(options || []).map(item => {
-                const value = String(item.value || '');
-                const isSelected = value === selected ? ' selected' : '';
+            return [
+                `<option value="">${escapeHtml(placeholder)}</option>`,
+                ...(options || []).map(item => {
+                    const value = String(item.value || '');
+                    const isSelected = value === selected ? ' selected' : '';
 
-                return `<option value="${escapeHtml(value)}"${isSelected}>${escapeHtml(item.text || value)}</option>`;
-            })
-        ].join('');
+                    return `<option value="${escapeHtml(value)}"${isSelected}>${escapeHtml(item.text || value)}</option>`;
+                })
+            ].join('');
+        } catch (functionError) {
+            logFunctionError('renderOptions', functionError);
+            throw functionError;
+        }
     };
 
     const renderMultiOptions = (options, selectedValues = []) => {
-        const selectedSet = new Set(
-            (selectedValues || []).map(value => String(value))
-        );
+        try {
+            const selectedSet = new Set(
+                (selectedValues || []).map(value => String(value))
+            );
 
-        return (options || []).map(item => {
-            const value = String(item.value || '');
-            const isSelected = selectedSet.has(value) ? ' selected' : '';
-            return `<option value="${escapeHtml(value)}"${isSelected}>${escapeHtml(item.text || value)}</option>`;
-        }).join('');
+            return (options || []).map(item => {
+                const value = String(item.value || '');
+                const isSelected = selectedSet.has(value) ? ' selected' : '';
+                return `<option value="${escapeHtml(value)}"${isSelected}>${escapeHtml(item.text || value)}</option>`;
+            }).join('');
+        } catch (functionError) {
+            logFunctionError('renderMultiOptions', functionError);
+            throw functionError;
+        }
     };
 
     const getExpenseCategoryOptions = subsidiaryIds => {
-        return getSearchOptions(
-            search.create({
-                type: 'expensecategory',
+        try {
+            return getSearchOptions(
+                search.create({
+                    type: 'expensecategory',
+                    filters: [
+                        [CONFIG.FIELDS.EXPENSE_CATEGORY_AVAILABLE, 'is', 'F'],
+                        'AND',
+                        ['isinactive', 'is', 'F'],
+                        'AND',
+                        ['subsidiary', 'anyof', subsidiaryIds]
+                    ],
+                    columns: [
+                        search.createColumn({
+                            name: 'internalid',
+                            summary: search.Summary.GROUP
+                        }),
+                        search.createColumn({
+                            name: 'name',
+                            summary: search.Summary.GROUP,
+                            sort: search.Sort.ASC
+                        })
+                    ]
+                }),
+                result => result.getValue({
+                    name: 'internalid',
+                    summary: search.Summary.GROUP
+                }),
+                result => result.getValue({
+                    name: 'name',
+                    summary: search.Summary.GROUP
+                })
+            );
+        } catch (functionError) {
+            logFunctionError('getExpenseCategoryOptions', functionError);
+            throw functionError;
+        }
+    };
+
+    /*
+     * Artículos marcados para mostrarse en el planificador, limitados a las
+     * subsidiarias indicadas. Se agrupa porque un artículo asignado a varias
+     * subsidiarias devuelve una fila por cada una.
+     */
+    const getPlannerItemOptions = subsidiaryIds => {
+        try {
+            return getSearchOptions(
+                search.create({
+                    type: search.Type.ITEM,
+                    filters: [
+                        [CONFIG.FIELDS.ITEM_SHOW_IN_PLANNER, 'is', 'T'],
+                        'AND',
+                        ['isinactive', 'is', 'F'],
+                        'AND',
+                        ['subsidiary', 'anyof', subsidiaryIds]
+                    ],
+                    columns: [
+                        search.createColumn({
+                            name: 'internalid',
+                            summary: search.Summary.GROUP
+                        }),
+                        search.createColumn({
+                            name: 'itemid',
+                            summary: search.Summary.GROUP,
+                            sort: search.Sort.ASC
+                        })
+                    ]
+                }),
+                result => result.getValue({
+                    name: 'internalid',
+                    summary: search.Summary.GROUP
+                }),
+                result => result.getValue({
+                    name: 'itemid',
+                    summary: search.Summary.GROUP
+                })
+            );
+        } catch (functionError) {
+            logFunctionError('getPlannerItemOptions', functionError);
+            throw functionError;
+        }
+    };
+
+    /*
+     * Artículo hijo parametrizado para un artículo padre, según la moneda de
+     * la factura y su total convertido a Soles, porque los rangos de la
+     * parametrización siempre están en Soles (límites incluidos). Si hay más
+     * de una coincidencia se toma el registro con el internalid más alto.
+     * Devuelve vacío si no hay parametrización que aplique.
+     */
+    const findChildItemId = ({ parentItemId, currencyId, totalInBaseCurrency }) => {
+        try {
+            const params = CONFIG.ITEM_PARAMETERS;
+
+            if (!currencyId || totalInBaseCurrency === null) {
+                return '';
+            }
+
+            const results = search.create({
+                type: params.RECORD,
                 filters: [
-                    [CONFIG.FIELDS.EXPENSE_CATEGORY_AVAILABLE, 'is', 'F'],
-                    'AND',
                     ['isinactive', 'is', 'F'],
                     'AND',
-                    ['subsidiary', 'anyof', subsidiaryIds]
+                    [params.PARENT_ITEM, 'anyof', parentItemId],
+                    'AND',
+                    [params.CURRENCY, 'anyof', currencyId],
+                    'AND',
+                    [params.CHILD_ITEM, 'noneof', '@NONE@'],
+                    'AND',
+                    [params.MIN_AMOUNT, 'lessthanorequalto', totalInBaseCurrency],
+                    'AND',
+                    [params.MAX_AMOUNT, 'greaterthanorequalto', totalInBaseCurrency]
                 ],
                 columns: [
                     search.createColumn({
                         name: 'internalid',
-                        summary: search.Summary.GROUP
+                        sort: search.Sort.DESC
                     }),
-                    search.createColumn({
-                        name: 'name',
-                        summary: search.Summary.GROUP,
-                        sort: search.Sort.ASC
-                    })
+                    search.createColumn({ name: params.CHILD_ITEM })
                 ]
-            }),
-            result => result.getValue({
-                name: 'internalid',
-                summary: search.Summary.GROUP
-            }),
-            result => result.getValue({
-                name: 'name',
-                summary: search.Summary.GROUP
-            })
-        );
+            }).run().getRange({ start: 0, end: 1 });
+
+            log.audit({
+                title: 'Búsqueda de artículo hijo',
+                details: {
+                    parentItemId,
+                    currencyId,
+                    totalInBaseCurrency,
+                    foundChildItemId: results.length
+                        ? results[0].getValue(params.CHILD_ITEM)
+                        : null
+                }
+            });
+
+            return results.length
+                ? cleanText(results[0].getValue(params.CHILD_ITEM))
+                : '';
+        } catch (functionError) {
+            logFunctionError('findChildItemId', functionError);
+            throw functionError;
+        }
     };
 
     const getLocationOptions = subsidiaryIds => {
-        return getSearchOptions(
-            search.create({
-                type: search.Type.LOCATION,
-                filters: [
-                    ['subsidiary', 'anyof', subsidiaryIds],
-                    'AND',
-                    ['isinactive', 'is', 'F']
-                ],
-                columns: [
-                    search.createColumn({
-                        name: 'name',
-                        sort: search.Sort.ASC
-                    })
-                ]
-            }),
-            result => result.id,
-            result => result.getValue('name')
-        );
+        try {
+            return getSearchOptions(
+                search.create({
+                    type: search.Type.LOCATION,
+                    filters: [
+                        ['subsidiary', 'anyof', subsidiaryIds],
+                        'AND',
+                        ['isinactive', 'is', 'F']
+                    ],
+                    columns: [
+                        search.createColumn({
+                            name: 'name',
+                            sort: search.Sort.ASC
+                        })
+                    ]
+                }),
+                result => result.id,
+                result => result.getValue('name')
+            );
+        } catch (functionError) {
+            logFunctionError('getLocationOptions', functionError);
+            throw functionError;
+        }
     };
 
     const getSimpleRecordOptions = (type, filters = []) => {
@@ -7564,20 +8337,25 @@ define([
     };
 
     const getDepartmentOptions = () => {
-        return getSearchOptions(
-            search.create({
-                type: search.Type.DEPARTMENT,
-                filters: [['isinactive', 'is', 'F']],
-                columns: [
-                    search.createColumn({
-                        name: 'name',
-                        sort: search.Sort.ASC
-                    })
-                ]
-            }),
-            result => result.id,
-            result => result.getValue('name')
-        );
+        try {
+            return getSearchOptions(
+                search.create({
+                    type: search.Type.DEPARTMENT,
+                    filters: [['isinactive', 'is', 'F']],
+                    columns: [
+                        search.createColumn({
+                            name: 'name',
+                            sort: search.Sort.ASC
+                        })
+                    ]
+                }),
+                result => result.id,
+                result => result.getValue('name')
+            );
+        } catch (functionError) {
+            logFunctionError('getDepartmentOptions', functionError);
+            throw functionError;
+        }
     };
 
     const getTaxItemOptions = () => {
@@ -7619,11 +8397,17 @@ define([
         const expectedCountryName =
             cleanText(countryConfig.name);
 
-        const normalizeText = value =>
-            cleanText(value)
-                .toUpperCase()
-                .normalize('NFD')
-                .replace(/[\u0300-\u036f]/g, '');
+        const normalizeText = value => {
+            try {
+                return cleanText(value)
+                    .toUpperCase()
+                    .normalize('NFD')
+                    .replace(/[\u0300-\u036f]/g, '');
+            } catch (functionError) {
+                logFunctionError('getTaxItemOptionsByCountry.normalizeText', functionError);
+                throw functionError;
+            }
+        };
 
         const expectedCountry =
             normalizeText(expectedCountryName);
@@ -7773,10 +8557,11 @@ define([
 
 
     const getCountryFlagSvg = countryCode => {
-        const code = cleanText(countryCode).toUpperCase();
+        try {
+            const code = cleanText(countryCode).toUpperCase();
 
-        if (code === 'MX') {
-            return `
+            if (code === 'MX') {
+                return `
                 <svg class="flag-svg" viewBox="0 0 60 40" role="img" aria-label="Bandera de México">
                     <rect width="20" height="40" x="0" fill="#006847"></rect>
                     <rect width="20" height="40" x="20" fill="#ffffff"></rect>
@@ -7785,40 +8570,51 @@ define([
                     <path d="M26.7 21.3c2.2 2.9 4.4 2.9 6.6 0" fill="none" stroke="#1f7a45" stroke-width="1.4" stroke-linecap="round"></path>
                 </svg>
             `;
-        }
+            }
 
-        if (code === 'PE') {
-            return `
+            if (code === 'PE') {
+                return `
                 <svg class="flag-svg" viewBox="0 0 60 40" role="img" aria-label="Bandera de Perú">
                     <rect width="20" height="40" x="0" fill="#d91023"></rect>
                     <rect width="20" height="40" x="20" fill="#ffffff"></rect>
                     <rect width="20" height="40" x="40" fill="#d91023"></rect>
                 </svg>
             `;
-        }
+            }
 
-        if (code === 'CO') {
-            return `
+            if (code === 'CO') {
+                return `
                 <svg class="flag-svg" viewBox="0 0 60 40" role="img" aria-label="Bandera de Colombia">
                     <rect width="60" height="20" y="0" fill="#fcd116"></rect>
                     <rect width="60" height="10" y="20" fill="#003893"></rect>
                     <rect width="60" height="10" y="30" fill="#ce1126"></rect>
                 </svg>
             `;
-        }
+            }
 
-        return '<div class="flag-placeholder">FE</div>';
+            return '<div class="flag-placeholder">FE</div>';
+        } catch (functionError) {
+            logFunctionError('getCountryFlagSvg', functionError);
+            throw functionError;
+        }
     };
 
     const getCountryCssClass = countryCode => {
-        const code = cleanText(countryCode).toUpperCase();
-        if (code === 'MX') return 'country-mx';
-        if (code === 'PE') return 'country-pe';
-        if (code === 'CO') return 'country-co';
-        return '';
+        try {
+            const code = cleanText(countryCode).toUpperCase();
+            if (code === 'MX') return 'country-mx';
+            if (code === 'PE') return 'country-pe';
+            if (code === 'CO') return 'country-co';
+            return '';
+        } catch (functionError) {
+            logFunctionError('getCountryCssClass', functionError);
+            throw functionError;
+        }
     };
 
-    const getBaseStyles = () => `
+    const getBaseStyles = () => {
+        try {
+            return `
         <style>
             :root {
                 --bg: #eaf0f6;
@@ -8596,7 +9392,7 @@ define([
 
 
             /* ============================================================
-               DISTRIBUCIÓN MULTI-CATEGORÍA
+               DISTRIBUCIÓN MULTI-LÍNEA
                ============================================================ */
 
             .distribution-card {
@@ -8678,7 +9474,12 @@ define([
                 background:#f8fafc;
             }
 
-            .distribution-category,
+            .distribution-mode {
+                max-width:320px;
+                margin-bottom:14px;
+            }
+
+            .distribution-select,
             .distribution-amount {
                 min-height:38px!important;
                 font-size:11.5px!important;
@@ -8687,6 +9488,12 @@ define([
             .distribution-amount {
                 text-align:right;
                 min-width:125px;
+            }
+
+            .distribution-igv {
+                width:18px;
+                height:18px;
+                cursor:pointer;
             }
 
             .distribution-tax-list {
@@ -8857,6 +9664,11 @@ define([
             }
         </style>
     `;
+        } catch (functionError) {
+            logFunctionError('getBaseStyles', functionError);
+            throw functionError;
+        }
+    };
 
     const getPageStart = ({
         title,
@@ -8868,35 +9680,36 @@ define([
         showTopbar = true,
         showHero = true
     }) => {
+        try {
 
-        const countryClass =
-            getCountryCssClass(
-                countryCode
-            );
-
-
-        const hasCountry =
-            Boolean(
-                cleanText(countryCode)
-            );
+            const countryClass =
+                getCountryCssClass(
+                    countryCode
+                );
 
 
-        const pageClasses = [
-            'page',
-            narrow
-                ? 'page--narrow'
-                : '',
-            !showTopbar && !showHero
-                ? 'no-header'
-                : ''
-        ]
-            .filter(Boolean)
-            .join(' ');
+            const hasCountry =
+                Boolean(
+                    cleanText(countryCode)
+                );
 
 
-        // resto...
-        const sideContent = hasCountry
-            ? `
+            const pageClasses = [
+                'page',
+                narrow
+                    ? 'page--narrow'
+                    : '',
+                !showTopbar && !showHero
+                    ? 'no-header'
+                    : ''
+            ]
+                .filter(Boolean)
+                .join(' ');
+
+
+            // resto...
+            const sideContent = hasCountry
+                ? `
                 <div class="hero-country">
                     <div class="hero-country-top">
                         <div class="flag-wrap">${getCountryFlagSvg(countryCode)}</div>
@@ -8913,7 +9726,7 @@ define([
                     ` : ''}
                 </div>
             `
-            : `
+                : `
                 <div class="supported-countries">
                     <div class="supported-title">Países disponibles</div>
                     <div class="country-chip"><span class="flag-wrap small">${getCountryFlagSvg('MX')}</span> México · CFDI</div>
@@ -8922,7 +9735,7 @@ define([
                 </div>
             `;
 
-        return `
+            return `
     <!DOCTYPE html>
     <html lang="es">
 
@@ -9021,39 +9834,51 @@ define([
 
                 ` : ''}
 `;
+        } catch (functionError) {
+            logFunctionError('getPageStart', functionError);
+            throw functionError;
+        }
     };
 
-    const getPageEnd = () => `
+    const getPageEnd = () => {
+        try {
+            return `
                     </main>
                 </div>
             </body>
             </html>
         `;
+        } catch (functionError) {
+            logFunctionError('getPageEnd', functionError);
+            throw functionError;
+        }
+    };
 
     const renderUploadForm = (context, params) => {
-        const plannerHomeUrl = getPlannerHomeUrl();
-        const showSuccess = params.success === '1';
-        const transactionNumber = cleanText(params.transactionNumber);
-        const billId = cleanText(params.billId);
-        const vendorBillUrl = billId
-            ? '/app/accounting/transactions/vendbill.nl?id=' + encodeURIComponent(billId)
-            : '';
+        try {
+            const plannerHomeUrl = getPlannerHomeUrl();
+            const showSuccess = params.success === '1';
+            const transactionNumber = cleanText(params.transactionNumber);
+            const billId = cleanText(params.billId);
+            const vendorBillUrl = billId
+                ? '/app/accounting/transactions/vendbill.nl?id=' + encodeURIComponent(billId)
+                : '';
 
-        const html = `
+            const html = `
        ${getPageStart({
-            title: 'Carga y validación de factura',
+                title: 'Carga y validación de factura',
 
-            subtitle:
-                'Adjunta el XML fiscal y el PDF de respaldo. ' +
-                'El sistema detectará México, Perú o Colombia y ' +
-                'preparará automáticamente los datos fiscales ' +
-                'antes de crear la factura.',
+                subtitle:
+                    'Adjunta el XML fiscal y el PDF de respaldo. ' +
+                    'El sistema detectará México, Perú o Colombia y ' +
+                    'preparará automáticamente los datos fiscales ' +
+                    'antes de crear la factura.',
 
-            narrow: true,
+                narrow: true,
 
-            showTopbar: false,
-            showHero: false
-        })}
+                showTopbar: false,
+                showHero: false
+            })}
 
             <div class="stepper">
                 <div class="step active"><b>1</b> Cargar archivos</div>
@@ -9360,19 +10185,24 @@ function syncFile(
             ${getPageEnd()}
         `;
 
-        writeHtml(context, html);
+            writeHtml(context, html);
+        } catch (functionError) {
+            logFunctionError('renderUploadForm', functionError);
+            throw functionError;
+        }
     };
 
     const renderTaxRows = taxes => {
-        const rows = (taxes || []).map((item, index) => {
-            const options = Array.isArray(item.taxOptions)
-                ? item.taxOptions
-                : [];
+        try {
+            const rows = (taxes || []).map((item, index) => {
+                const options = Array.isArray(item.taxOptions)
+                    ? item.taxOptions
+                    : [];
 
-            let taxControl = '';
+                let taxControl = '';
 
-            if (options.length > 1) {
-                taxControl = `
+                if (options.length > 1) {
+                    taxControl = `
                     <select
                         id="custpage_tax_mapping_${index}"
                         name="custpage_tax_mapping_${index}"
@@ -9386,13 +10216,13 @@ function syncFile(
                         `).join('')}
                     </select>
                 `;
-            } else if (item.taxName) {
-                taxControl = `<span>${escapeHtml(item.taxName)}</span>`;
-            } else {
-                taxControl = '<span class="tax-missing">Sin configurar</span>';
-            }
+                } else if (item.taxName) {
+                    taxControl = `<span>${escapeHtml(item.taxName)}</span>`;
+                } else {
+                    taxControl = '<span class="tax-missing">Sin configurar</span>';
+                }
 
-            return `
+                return `
                 <tr>
                     <td>${escapeHtml(item.type || '')}</td>
                     <td><span class="tax-code">${escapeHtml(item.authorityCode || item.name || '')}</span></td>
@@ -9401,169 +10231,189 @@ function syncFile(
                     <td class="tax-amount">${toNumber(item.amount).toFixed(2)}</td>
                 </tr>
             `;
-        }).join('');
+            }).join('');
 
-        return rows || `
+            return rows || `
             <tr data-empty-tax-row="T">
                 <td colspan="5" style="text-align:center;color:#98a2b3;padding:24px;">
                     No se detectaron impuestos en el XML.
                 </td>
             </tr>
         `;
+        } catch (functionError) {
+            logFunctionError('renderTaxRows', functionError);
+            throw functionError;
+        }
     };
 
     const renderValidationForm = (context, data) => {
-        const plannerHomeUrl = getPlannerHomeUrl();
-        const invoice = data.invoice;
-        const countryConfig = CONFIG.COUNTRY[invoice.countryCode];
-        const subsidiaryIds = getSubsidiaryIdsByCountry(invoice.countryCode);
+        try {
+            const plannerHomeUrl = getPlannerHomeUrl();
+            const invoice = data.invoice;
+            const countryConfig = CONFIG.COUNTRY[invoice.countryCode];
+            const subsidiaryIds = getSubsidiaryIdsByCountry(invoice.countryCode);
 
-        const categoryOptions = getExpenseCategoryOptions(subsidiaryIds);
-        const locationOptions =
-            getLocationOptions(
-                subsidiaryIds
+            const categoryOptions = getExpenseCategoryOptions(subsidiaryIds);
+            // Sólo artículos de la subsidiaria a la que se cargará la factura
+            // (la resuelta por findSubsidiary con la identificación del receptor).
+            const itemOptions = getPlannerItemOptions([data.subsidiary.id]);
+
+            // Perú entra por defecto al proceso de artículos; el resto, por gastos.
+            const defaultLineMode = invoice.countryCode === 'PE' ? 'ITEMS' : 'EXPENSES';
+
+            log.audit({
+                title: 'Artículos del planificador',
+                details: {
+                    subsidiaryId: data.subsidiary.id,
+                    total: itemOptions.length
+                }
+            });
+
+            const locationOptions =
+                getLocationOptions(
+                    subsidiaryIds
+                );
+
+            /*
+             * Regional por defecto:
+             * se toma de la Location/Regional asignada al usuario actual.
+             * Si no existe o no pertenece a las opciones del país, queda vacío.
+             */
+            const defaultRegionalId =
+                getCurrentUserRegionalDefault(
+                    locationOptions
+                );
+
+            const brandOptions =
+                getBrandOptionsByCountry(
+                    invoice.countryCode
+                );
+            const departmentOptions = getDepartmentOptions();
+            const bankOptions =
+                getBankOptions(
+                    invoice.countryCode
+                );
+            const plateOptions = countryConfig.plateRecord
+                ? getSimpleRecordOptions(countryConfig.plateRecord)
+                : [];
+
+            const defaultTaxId = runtime.getCurrentScript().getParameter({
+                name: 'custscript_iva_default'
+            }) || '';
+
+            const hasConfiguredMainTax = invoice.taxes.some(item =>
+                ['TRANSFER', 'EXEMPT', 'UNAFFECTED'].includes(item.type) &&
+                (
+                    item.taxId ||
+                    (Array.isArray(item.taxOptions) && item.taxOptions.length)
+                )
             );
 
-        /*
-         * Regional por defecto:
-         * se toma de la Location/Regional asignada al usuario actual.
-         * Si no existe o no pertenece a las opciones del país, queda vacío.
-         */
-        const defaultRegionalId =
-            getCurrentUserRegionalDefault(
-                locationOptions
+            const hasUnmappedWithholding = invoice.taxes.some(item =>
+                ['WITHHOLDING', 'DETRACTION'].includes(item.type) &&
+                !item.taxId &&
+                !(
+                    Array.isArray(item.taxOptions) &&
+                    item.taxOptions.length
+                )
             );
 
-        const brandOptions =
-            getBrandOptionsByCountry(
-                invoice.countryCode
-            );
-        const departmentOptions = getDepartmentOptions();
-        const bankOptions =
-            getBankOptions(
-                invoice.countryCode
-            );
-        const plateOptions = countryConfig.plateRecord
-            ? getSimpleRecordOptions(countryConfig.plateRecord)
-            : [];
+            const taxOptions =
+                getTaxItemOptionsByCountry(
+                    invoice.countryCode
+                );
 
-        const defaultTaxId = runtime.getCurrentScript().getParameter({
-            name: 'custscript_iva_default'
-        }) || '';
+            let currencyOptions = [];
+            let currencyDefault = '';
 
-        const hasConfiguredMainTax = invoice.taxes.some(item =>
-            ['TRANSFER', 'EXEMPT', 'UNAFFECTED'].includes(item.type) &&
-            (
-                item.taxId ||
-                (Array.isArray(item.taxOptions) && item.taxOptions.length)
-            )
-        );
-
-        const hasUnmappedWithholding = invoice.taxes.some(item =>
-            ['WITHHOLDING', 'DETRACTION'].includes(item.type) &&
-            !item.taxId &&
-            !(
-                Array.isArray(item.taxOptions) &&
-                item.taxOptions.length
-            )
-        );
-
-        const taxOptions =
-            getTaxItemOptionsByCountry(
-                invoice.countryCode
-            );
-
-        let currencyOptions = [];
-        let currencyDefault = '';
-
-        if (data.vendorId) {
-            const currencies = getVendorCurrencies(data.vendorId);
-            currencyOptions = (currencies.values || []).map(item => ({
-                value: item.id,
-                text: item.name
-            }));
-            currencyDefault = currencies.primary || '';
-        }
-
-        let bankAccountValue = '';
-        let bankValue = '';
-
-        if (data.vendorId) {
-            const accountResults = search.create({
-                type: 'customrecord_ce_cue_ent',
-                filters: [
-                    ['custrecord_ce_cue_ent_entidad', 'anyof', data.vendorId]
-                ],
-                columns: [
-                    'custrecord_ce_cue_ent_cuenta',
-                    'custrecord_ce_cue_ent_banco_nal'
-                ]
-            }).run().getRange({ start: 0, end: 1 });
-
-            if (accountResults.length) {
-                bankAccountValue = accountResults[0].getValue('custrecord_ce_cue_ent_cuenta') || '';
-                bankValue = accountResults[0].getValue('custrecord_ce_cue_ent_banco_nal') || '';
+            if (data.vendorId) {
+                const currencies = getVendorCurrencies(data.vendorId);
+                currencyOptions = (currencies.values || []).map(item => ({
+                    value: item.id,
+                    text: item.name
+                }));
+                currencyDefault = currencies.primary || '';
             }
-        }
 
-        const supplierTaxLabel = invoice.countryCode === 'MX'
-            ? 'RFC del proveedor'
-            : invoice.countryCode === 'PE'
-                ? 'RUC del proveedor'
-                : invoice.countryCode === 'CO'
-                    ? 'NIT del proveedor'
-                    : 'Identificación fiscal';
+            let bankAccountValue = '';
+            let bankValue = '';
 
-        const issueDate =
-            formatHtmlDate(
-                invoice.issueDate
-            );
+            if (data.vendorId) {
+                const accountResults = search.create({
+                    type: 'customrecord_ce_cue_ent',
+                    filters: [
+                        ['custrecord_ce_cue_ent_entidad', 'anyof', data.vendorId]
+                    ],
+                    columns: [
+                        'custrecord_ce_cue_ent_cuenta',
+                        'custrecord_ce_cue_ent_banco_nal'
+                    ]
+                }).run().getRange({ start: 0, end: 1 });
+
+                if (accountResults.length) {
+                    bankAccountValue = accountResults[0].getValue('custrecord_ce_cue_ent_cuenta') || '';
+                    bankValue = accountResults[0].getValue('custrecord_ce_cue_ent_banco_nal') || '';
+                }
+            }
+
+            const supplierTaxLabel = invoice.countryCode === 'MX'
+                ? 'RFC del proveedor'
+                : invoice.countryCode === 'PE'
+                    ? 'RUC del proveedor'
+                    : invoice.countryCode === 'CO'
+                        ? 'NIT del proveedor'
+                        : 'Identificación fiscal';
+
+            const issueDate =
+                formatHtmlDate(
+                    invoice.issueDate
+                );
 
 
-        const isEditableIssueDate =
-            ['PE', 'CO'].includes(
-                cleanText(invoice.countryCode).toUpperCase()
-            );
+            const isEditableIssueDate =
+                ['PE', 'CO'].includes(
+                    cleanText(invoice.countryCode).toUpperCase()
+                );
 
 
-        const countryCode =
-            cleanText(invoice.countryCode).toUpperCase();
+            const countryCode =
+                cleanText(invoice.countryCode).toUpperCase();
 
-        const dueDate =
-            formatHtmlDate(
-                countryCode === 'CO'
-                    ? getNextWednesday()
-                    : getNextThursday()
-            );
+            const dueDate =
+                formatHtmlDate(
+                    countryCode === 'CO'
+                        ? getNextWednesday()
+                        : getNextThursday()
+                );
 
-        const invoiceJson =
-            escapeHtml(
-                JSON.stringify(invoice)
-            );
-        const taxesJson = escapeHtml(JSON.stringify(invoice.taxes));
-        const totalText = `${invoice.currencyCode || ''} ${toNumber(invoice.total).toFixed(2)}`;
+            const invoiceJson =
+                escapeHtml(
+                    JSON.stringify(invoice)
+                );
+            const taxesJson = escapeHtml(JSON.stringify(invoice.taxes));
+            const totalText = `${invoice.currencyCode || ''} ${toNumber(invoice.total).toFixed(2)}`;
 
-        const html = `
+            const html = `
          ${getPageStart({
-            title: 'Revisión del comprobante',
+                title: 'Revisión del comprobante',
 
-            subtitle:
-                `La factura fue validada para ${invoice.countryName}. ` +
-                `Revisa la información fiscal y completa los datos administrativos ` +
-                `antes de crear la transacción.`,
+                subtitle:
+                    `La factura fue validada para ${invoice.countryName}. ` +
+                    `Revisa la información fiscal y completa los datos administrativos ` +
+                    `antes de crear la transacción.`,
 
-            countryCode:
-                invoice.countryCode,
+                countryCode:
+                    invoice.countryCode,
 
-            countryName:
-                invoice.countryName,
+                countryName:
+                    invoice.countryName,
 
-            totalText,
+                totalText,
 
-            // Ocultar todo lo superior
-            showTopbar: false,
-            showHero: false
-        })}
+                // Ocultar todo lo superior
+                showTopbar: false,
+                showHero: false
+            })}
 
 <div class="review-toolbar">
 
@@ -9683,8 +10533,8 @@ function syncFile(
 
                             <span class="status-pill ${data.vendorId ? 'success' : 'warning'}">
                                 ${data.vendorId
-                ? `Proveedor existente · ID ${escapeHtml(data.vendorId)}`
-                : 'Proveedor nuevo'}
+                    ? `Proveedor existente · ID ${escapeHtml(data.vendorId)}`
+                    : 'Proveedor nuevo'}
                             </span>
                         </div>
 
@@ -9750,15 +10600,28 @@ function syncFile(
                                 Distribución de gastos e impuestos
                             </h2>
 
-                            <p class="card-subtitle">
-                                Cada fila genera una línea de gasto independiente.
-                                Los impuestos XML o manuales pertenecen únicamente a la categoría de esa fila.
+                            <p class="card-subtitle" id="distributionSubtitle">
                             </p>
                         </div>
 
-                        <span class="status-pill success">
-                            Multi-categoría
+                        <span class="status-pill success" id="distributionModePill">
                         </span>
+                    </div>
+
+
+                    <div class="field distribution-mode">
+                        <label for="custpage_tipo_linea">
+                            Registrar la factura por <span class="required">*</span>
+                        </label>
+
+                        <select
+                            id="custpage_tipo_linea"
+                            name="custpage_tipo_linea"
+                            required
+                        >
+                            <option value="ITEMS"${defaultLineMode === 'ITEMS' ? ' selected' : ''}>Artículos</option>
+                            <option value="EXPENSES"${defaultLineMode === 'EXPENSES' ? ' selected' : ''}>Gastos</option>
+                        </select>
                     </div>
 
 
@@ -9807,9 +10670,14 @@ function syncFile(
 
                             <thead>
                                 <tr>
-                                    <th style="width:24%;">
-                                        Categoría de gasto
+                                    <th style="width:24%;" id="distributionTargetHeader">
                                     </th>
+
+                                    ${invoice.countryCode === 'PE' ? `
+                                        <th style="width:8%;text-align:center;" id="distributionIgvHeader">
+                                            Aplica IGV
+                                        </th>
+                                    ` : ''}
 
                                     <th style="width:13%;text-align:right;">
                                         Base / importe
@@ -9848,7 +10716,6 @@ function syncFile(
                             id="addExpenseDistributionLine"
                             type="button"
                         >
-                            + Agregar categoría de gasto
                         </button>
 
                     </div>
@@ -9884,10 +10751,10 @@ function syncFile(
                                             required
                                         >
                                             ${renderOptions(
-                    currencyOptions,
-                    currencyDefault,
-                    'Selecciona una moneda'
-                )}
+                        currencyOptions,
+                        currencyDefault,
+                        'Selecciona una moneda'
+                    )}
                                         </select>
                                     </div>
                                 ` : ''}
@@ -9963,10 +10830,10 @@ function syncFile(
                                         required
                                     >
                                         ${renderOptions(
-                    locationOptions,
-                    defaultRegionalId,
-                    'Selecciona una regional'
-                )}
+                        locationOptions,
+                        defaultRegionalId,
+                        'Selecciona una regional'
+                    )}
                                     </select>
                                 </div>
 
@@ -9981,10 +10848,10 @@ function syncFile(
                                         required
                                     >
                                         ${renderOptions(
-                    brandOptions,
-                    '',
-                    'Selecciona una marca'
-                )}
+                        brandOptions,
+                        '',
+                        'Selecciona una marca'
+                    )}
                                     </select>
                                 </div>
 
@@ -9999,10 +10866,10 @@ function syncFile(
                                         required
                                     >
                                         ${renderOptions(
-                    departmentOptions,
-                    '',
-                    'Selecciona un departamento'
-                )}
+                        departmentOptions,
+                        '',
+                        'Selecciona un departamento'
+                    )}
                                     </select>
                                 </div>
 
@@ -10055,8 +10922,8 @@ function syncFile(
                                     <label for="custpage_cuenta_bancaria">
                                         ${escapeHtml(countryConfig.bankAccountLabel)}
                                         ${!data.vendorId
-                ? ' <span class="required">*</span>'
-                : ''}
+                    ? ' <span class="required">*</span>'
+                    : ''}
                                     </label>
 
                                     <input
@@ -10073,8 +10940,8 @@ function syncFile(
                                     <label for="custpage_banco">
                                         Banco
                                         ${!data.vendorId
-                ? ' <span class="required">*</span>'
-                : ''}
+                    ? ' <span class="required">*</span>'
+                    : ''}
                                     </label>
 
                                     <select
@@ -10083,10 +10950,10 @@ function syncFile(
                                         ${!data.vendorId ? 'required' : 'disabled'}
                                     >
                                         ${renderOptions(
-                    bankOptions,
-                    bankValue,
-                    'Selecciona un banco'
-                )}
+                        bankOptions,
+                        bankValue,
+                        'Selecciona un banco'
+                    )}
                                     </select>
                                 </div>
 
@@ -10101,10 +10968,10 @@ function syncFile(
                                             name="custpage_placas"
                                         >
                                             ${renderOptions(
-                    plateOptions,
-                    '',
-                    'Sin placa / No aplica'
-                )}
+                        plateOptions,
+                        '',
+                        'Sin placa / No aplica'
+                    )}
                                         </select>
                                     </div>
                                 ` : ''}
@@ -10135,11 +11002,35 @@ function syncFile(
                     var expenseCategoryOptions =
                         ${JSON.stringify(categoryOptions)};
 
+                    var plannerItemOptions =
+                        ${JSON.stringify(itemOptions)};
+
                     var invoiceSubtotal =
                         ${JSON.stringify(Number(toNumber(invoice.subtotal).toFixed(2)))};
 
                     var invoiceCurrency =
                         ${JSON.stringify(invoice.currencyCode || '')};
+
+                    var isPeruInvoice =
+                        ${JSON.stringify(invoice.countryCode === 'PE')};
+
+                    var lineModeSelect =
+                        document.getElementById('custpage_tipo_linea');
+
+
+                    /*
+                     * ITEMS: líneas de artículo.
+                     * EXPENSES: líneas de gasto por categoría.
+                     * Ambos modos llevan los mismos impuestos por línea.
+                     */
+                    function isItemMode() {
+                        return lineModeSelect.value === 'ITEMS';
+                    }
+
+
+                    function showIgvColumn() {
+                        return isPeruInvoice && isItemMode();
+                    }
 
                     var distributionLines = [];
                     var distributionSequence = 0;
@@ -10492,6 +11383,34 @@ function syncFile(
                     }
 
 
+                    function itemOptionsHtml(selectedValue) {
+
+                        return [
+                            '<option value="">Selecciona un artículo</option>'
+                        ].concat(
+                            (plannerItemOptions || []).map(
+                                function (option) {
+
+                                    return (
+                                        '<option value="' +
+                                        escapeClientHtml(option.value) +
+                                        '"' +
+                                        (
+                                            String(option.value) ===
+                                            String(selectedValue || '')
+                                                ? ' selected'
+                                                : ''
+                                        ) +
+                                        '>' +
+                                        escapeClientHtml(option.text) +
+                                        '</option>'
+                                    );
+                                }
+                            )
+                        ).join('');
+                    }
+
+
                     function taxesHtml(line) {
 
                         if (!line.taxes || !line.taxes.length) {
@@ -10578,7 +11497,9 @@ function syncFile(
                                     function (line) {
 
                                         return {
+                                            itemId: line.itemId || '',
                                             categoryId: line.categoryId || '',
+                                            appliesIgv: Boolean(line.appliesIgv),
                                             amount: Number(line.amount || 0) || 0,
                                             memo: line.memo || '',
                                             taxes: (line.taxes || []).map(
@@ -10734,12 +11655,31 @@ function syncFile(
                                         '">' +
 
                                             '<td>' +
-                                                '<select class="distribution-category">' +
-                                                    categoryOptionsHtml(
-                                                        line.categoryId
+                                                '<select class="distribution-select">' +
+                                                    (
+                                                        isItemMode()
+                                                            ? itemOptionsHtml(line.itemId)
+                                                            : categoryOptionsHtml(line.categoryId)
                                                     ) +
                                                 '</select>' +
                                             '</td>' +
+
+                                            (
+                                                showIgvColumn()
+                                                    ? '<td style="text-align:center;">' +
+                                                        '<input ' +
+                                                            'class="distribution-igv" ' +
+                                                            'type="checkbox" ' +
+                                                            'title="Aplica IGV"' +
+                                                            (
+                                                                line.appliesIgv
+                                                                    ? ' checked'
+                                                                    : ''
+                                                            ) +
+                                                        '>' +
+                                                    '</td>'
+                                                    : ''
+                                            ) +
 
                                             '<td>' +
                                                 '<input ' +
@@ -10819,9 +11759,15 @@ function syncFile(
                                 }
 
 
-                                var category =
+                                var targetSelect =
                                     row.querySelector(
-                                        '.distribution-category'
+                                        '.distribution-select'
+                                    );
+
+
+                                var igvCheck =
+                                    row.querySelector(
+                                        '.distribution-igv'
                                     );
 
 
@@ -10849,16 +11795,38 @@ function syncFile(
                                     );
 
 
-                                category.addEventListener(
+                                /*
+                                 * Artículo y categoría se guardan por separado:
+                                 * al cambiar de modo no se pierde lo elegido.
+                                 */
+                                targetSelect.addEventListener(
                                     'change',
                                     function () {
 
-                                        line.categoryId =
-                                            category.value;
+                                        if (isItemMode()) {
+                                            line.itemId = targetSelect.value;
+                                        } else {
+                                            line.categoryId = targetSelect.value;
+                                        }
 
                                         syncDistributionJson();
                                     }
                                 );
+
+
+                                if (igvCheck) {
+
+                                    igvCheck.addEventListener(
+                                        'change',
+                                        function () {
+
+                                            line.appliesIgv =
+                                                igvCheck.checked;
+
+                                            syncDistributionJson();
+                                        }
+                                    );
+                                }
 
 
                                 /*
@@ -10933,9 +11901,9 @@ function syncFile(
 
                                             await Swal.fire({
                                                 icon: 'warning',
-                                                title: 'Se requiere una categoría',
+                                                title: 'Se requiere una línea',
                                                 text:
-                                                    'La factura debe conservar al menos una línea de gasto.'
+                                                    'La factura debe conservar al menos una línea.'
                                             });
 
                                             return;
@@ -10945,7 +11913,7 @@ function syncFile(
                                         var answer =
                                             await Swal.fire({
                                                 icon: 'warning',
-                                                title: '¿Eliminar esta categoría?',
+                                                title: '¿Eliminar esta línea?',
                                                 text:
                                                     'También se eliminarán sus impuestos asociados.',
                                                 showCancelButton: true,
@@ -11222,7 +12190,7 @@ function syncFile(
                                         selectedTax.text ||
                                         selectedTax.value
                                     ) +
-                                    '</b> ya existe en esta categoría como impuesto <b>' +
+                                    '</b> ya existe en esta línea como impuesto <b>' +
                                     escapeClientHtml(
                                         String(
                                             duplicateTax.source ||
@@ -11230,7 +12198,7 @@ function syncFile(
                                         )
                                     ) +
                                     '</b>.<br><br>' +
-                                    'NetSuite sólo permite una vez el mismo Tax Code por línea de gasto.',
+                                    'NetSuite sólo permite una vez el mismo Tax Code por línea.',
                                 confirmButtonText: 'Entendido'
                             });
 
@@ -11580,7 +12548,7 @@ function syncFile(
                                 : (
                                     '<tr>' +
                                         '<td colspan="7" style="padding:18px;text-align:center;color:#8290a0;">' +
-                                            'Esta categoría no tiene impuestos asociados.' +
+                                            'Esta línea no tiene impuestos asociados.' +
                                         '</td>' +
                                     '</tr>'
                                 );
@@ -11588,12 +12556,12 @@ function syncFile(
 
                         var result =
                             await Swal.fire({
-                                title: 'Impuestos de la categoría',
+                                title: 'Impuestos de la línea',
                                 width: 920,
 
                                 html:
                                     '<div style="text-align:left;margin-bottom:12px;">' +
-                                        'Base de categoría: <b>' +
+                                        'Base de la línea: <b>' +
                                         invoiceCurrency +
                                         ' ' +
                                         formatMoney(line.amount) +
@@ -11818,7 +12786,9 @@ function syncFile(
                                 'expense_' +
                                 distributionSequence,
 
+                            itemId: '',
                             categoryId: '',
+                            appliesIgv: false,
                             amount:
                                 Number(amount || 0) || 0,
                             memo: '',
@@ -11875,6 +12845,59 @@ function syncFile(
                     );
 
 
+                    /*
+                     * Textos y columnas que dependen del tipo de línea.
+                     * Al cambiar de modo se redibuja la tabla con el catálogo
+                     * correspondiente (artículos o categorías de gasto).
+                     */
+                    function applyLineModeLabels() {
+
+                        var itemMode = isItemMode();
+
+                        var labels = {
+                            distributionSubtitle: itemMode
+                                ? 'Cada fila genera una línea de artículo independiente. ' +
+                                  'Los impuestos XML o manuales pertenecen únicamente al artículo de esa fila.'
+                                : 'Cada fila genera una línea de gasto independiente. ' +
+                                  'Los impuestos XML o manuales pertenecen únicamente a la categoría de esa fila.',
+                            distributionModePill: itemMode ? 'Artículos' : 'Multi-categoría',
+                            distributionTargetHeader: itemMode ? 'Artículo' : 'Categoría de gasto',
+                            addExpenseDistributionLine: itemMode
+                                ? '+ Agregar artículo'
+                                : '+ Agregar categoría de gasto'
+                        };
+
+                        Object.keys(labels).forEach(function (id) {
+                            var node = document.getElementById(id);
+
+                            if (node) {
+                                node.textContent = labels[id];
+                            }
+                        });
+
+
+                        var igvHeader =
+                            document.getElementById('distributionIgvHeader');
+
+                        if (igvHeader) {
+                            igvHeader.style.display =
+                                showIgvColumn() ? '' : 'none';
+                        }
+                    }
+
+
+                    lineModeSelect.addEventListener(
+                        'change',
+                        function () {
+                            applyLineModeLabels();
+                            renderDistribution();
+                        }
+                    );
+
+
+                    applyLineModeLabels();
+
+
                     // Primera fila = subtotal completo + impuestos XML.
                     addDistributionLine(
                         invoiceSubtotal,
@@ -11889,7 +12912,9 @@ function syncFile(
                             return {
                                 ok: false,
                                 message:
-                                    'Debes agregar al menos una categoría de gasto.'
+                                    isItemMode()
+                                        ? 'Debes agregar al menos un artículo.'
+                                        : 'Debes agregar al menos una categoría de gasto.'
                             };
                         }
 
@@ -11904,12 +12929,16 @@ function syncFile(
                                 distributionLines[i];
 
 
-                            if (!line.categoryId) {
+                            if (isItemMode() ? !line.itemId : !line.categoryId) {
 
                                 return {
                                     ok: false,
                                     message:
-                                        'Selecciona la categoría de gasto de la línea ' +
+                                        (
+                                            isItemMode()
+                                                ? 'Selecciona el artículo de la línea '
+                                                : 'Selecciona la categoría de gasto de la línea '
+                                        ) +
                                         (i + 1) +
                                         '.'
                                 };
@@ -12138,19 +13167,24 @@ function syncFile(
             ${getPageEnd()}
         `;
 
-        writeHtml(context, html);
+            writeHtml(context, html);
+        } catch (functionError) {
+            logFunctionError('renderValidationForm', functionError);
+            throw functionError;
+        }
     };
 
     const renderErrorPage = (context, error) => {
-        const message = cleanText(error && error.message ? error.message : error) ||
-            'No fue posible procesar la factura.';
+        try {
+            const message = cleanText(error && error.message ? error.message : error) ||
+                'No fue posible procesar la factura.';
 
-        const html = `
+            const html = `
             ${getPageStart({
-            title: 'No fue posible procesar la factura',
-            subtitle: 'Se encontró un problema durante el procesamiento del comprobante.',
-            narrow: true
-        })}
+                title: 'No fue posible procesar la factura',
+                subtitle: 'Se encontró un problema durante el procesamiento del comprobante.',
+                narrow: true
+            })}
 
             <section class="card">
                 <div class="card-body" style="padding:28px;">
@@ -12177,7 +13211,11 @@ function syncFile(
             ${getPageEnd()}
         `;
 
-        writeHtml(context, html);
+            writeHtml(context, html);
+        } catch (functionError) {
+            logFunctionError('renderErrorPage', functionError);
+            throw functionError;
+        }
     };
 
 
@@ -12186,53 +13224,63 @@ function syncFile(
     // -------------------------------------------------------------------------
 
     const writeJson = (context, payload) => {
-        context.response.setHeader({ name: 'Content-Type', value: 'application/json; charset=UTF-8' });
-        context.response.write({ output: JSON.stringify(payload) });
+        try {
+            context.response.setHeader({ name: 'Content-Type', value: 'application/json; charset=UTF-8' });
+            context.response.write({ output: JSON.stringify(payload) });
+        } catch (functionError) {
+            logFunctionError('writeJson', functionError);
+            throw functionError;
+        }
     };
 
     const handleValidationUpload = context => {
-        const request = context.request;
-        const xmlUpload = request.files.custpage_xml;
-        const pdfUpload = request.files.custpage_pdf;
+        try {
+            const request = context.request;
+            const xmlUpload = request.files.custpage_xml;
+            const pdfUpload = request.files.custpage_pdf;
 
-        if (!xmlUpload || !pdfUpload) throw new Error('Debes cargar XML y PDF.');
+            if (!xmlUpload || !pdfUpload) throw new Error('Debes cargar XML y PDF.');
 
-        // Primero se valida. Sólo si es correcto se guardan los archivos.
-        const invoice = parseElectronicInvoice(xmlUpload.getContents());
+            // Primero se valida. Sólo si es correcto se guardan los archivos.
+            const invoice = parseElectronicInvoice(xmlUpload.getContents());
 
-        const duplicate = findDuplicateBill(
-            invoice.documentId,
-            invoice.documentNumber
-        );
-        if (duplicate) {
-            throw new Error(`El comprobante ya existe en la factura ${duplicate.transactionNumber}.`);
+            const duplicate = findDuplicateBill(
+                invoice.documentId,
+                invoice.documentNumber
+            );
+            if (duplicate) {
+                throw new Error(`El comprobante ya existe en la factura ${duplicate.transactionNumber}.`);
+            }
+
+            const subsidiary = findSubsidiary(invoice.customerTaxId);
+            if (!subsidiary) {
+                throw new Error(`No se encontró una subsidiaria con identificación fiscal ${invoice.customerTaxId}.`);
+            }
+
+            // La subsidiaria receptora tiene prioridad sobre la detección heurística UBL.
+            if (['PE', 'CO'].includes(subsidiary.countryCode) && invoice.countryCode !== subsidiary.countryCode) {
+                invoice.countryCode = subsidiary.countryCode;
+                invoice.countryName = CONFIG.COUNTRY[subsidiary.countryCode].name;
+            }
+
+            const vendorId = findVendor(
+                invoice.countryCode,
+                invoice.supplierTaxId
+            );
+            const xmlId = saveUploadedFile(xmlUpload, file.Type.XMLDOC);
+            const pdfId = saveUploadedFile(pdfUpload, file.Type.PDF);
+
+            renderValidationForm(context, {
+                invoice,
+                subsidiary,
+                vendorId,
+                xmlFile: file.load({ id: xmlId }),
+                pdfFile: file.load({ id: pdfId })
+            });
+        } catch (functionError) {
+            logFunctionError('handleValidationUpload', functionError);
+            throw functionError;
         }
-
-        const subsidiary = findSubsidiary(invoice.customerTaxId);
-        if (!subsidiary) {
-            throw new Error(`No se encontró una subsidiaria con identificación fiscal ${invoice.customerTaxId}.`);
-        }
-
-        // La subsidiaria receptora tiene prioridad sobre la detección heurística UBL.
-        if (['PE', 'CO'].includes(subsidiary.countryCode) && invoice.countryCode !== subsidiary.countryCode) {
-            invoice.countryCode = subsidiary.countryCode;
-            invoice.countryName = CONFIG.COUNTRY[subsidiary.countryCode].name;
-        }
-
-        const vendorId = findVendor(
-            invoice.countryCode,
-            invoice.supplierTaxId
-        );
-        const xmlId = saveUploadedFile(xmlUpload, file.Type.XMLDOC);
-        const pdfId = saveUploadedFile(pdfUpload, file.Type.PDF);
-
-        renderValidationForm(context, {
-            invoice,
-            subsidiary,
-            vendorId,
-            xmlFile: file.load({ id: xmlId }),
-            pdfFile: file.load({ id: pdfId })
-        });
     };
 
     const onRequest = context => {
