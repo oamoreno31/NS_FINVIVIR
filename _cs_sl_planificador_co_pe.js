@@ -9402,7 +9402,7 @@ define([
 
             .distribution-summary {
                 display:grid;
-                grid-template-columns:repeat(3,minmax(0,1fr));
+                grid-template-columns:repeat(4,minmax(0,1fr));
                 gap:10px;
                 padding:14px 18px;
                 background:#f8fbfe;
@@ -9474,9 +9474,19 @@ define([
                 background:#f8fafc;
             }
 
+            /*
+             * El selector va directo dentro de la tarjeta (sin card-body),
+             * así que replica el padding y fondo del resumen inferior
+             * para quedar alineado con las cajas de importes.
+             */
             .distribution-mode {
+                margin:0;
+                padding:14px 18px 0;
+                background:#f8fbfe;
+            }
+
+            .distribution-mode select {
                 max-width:320px;
-                margin-bottom:14px;
             }
 
             .distribution-select,
@@ -9578,6 +9588,12 @@ define([
                 color:#6f7f91;
                 font-size:10.5px;
                 line-height:1.45;
+            }
+
+            @media (max-width:1100px) {
+                .distribution-summary {
+                    grid-template-columns:repeat(2,minmax(0,1fr));
+                }
             }
 
             @media (max-width:760px) {
