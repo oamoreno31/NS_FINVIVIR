@@ -122,7 +122,20 @@ define([
             CHILD_ITEM: 'custrecord_fvr_art_hijo',
             CURRENCY: 'custrecord_fvr_moneda',
             MIN_AMOUNT: 'custrecord_fvr_monto_minimo',
-            MAX_AMOUNT: 'custrecord_fvr_monto_maximo'
+            MAX_AMOUNT: 'custrecord_fvr_monto_maximo',
+            TAX_PERCENT: 'custrecord_fvr_porcentaje',
+
+            /*
+             * Porcentajes que el usuario puede elegir por línea de artículo.
+             * Solo filtran la parametrización; no se asigna ningún impuesto.
+             */
+            TAX_PERCENT_OPTIONS: [
+                { value: '4', text: 'Impuestos 4 %' },
+                { value: '10', text: 'Impuestos 10 %' },
+                { value: '10.5', text: 'Impuestos 10.5 %' },
+                { value: '12', text: 'Impuestos 12 %' },
+                { value: '18', text: 'Impuestos 18%' },
+            ]
         },
 
         FIELDS: {
@@ -6990,28 +7003,60 @@ define([
                     }
 
 
+                    const appliesIgv =
+                        isItemMode &&
+                        line.appliesIgv === true &&
+                        cleanText(invoiceData.countryCode).toUpperCase() === 'PE';
+
+
+                    /*
+                     * Artículos con "Aplica IGV": el porcentaje elegido solo
+                     * filtra la parametrización del artículo hijo
+                     * (custrecord_fvr_porcentaje). Sin el check no aplica.
+                     */
+                    const taxPercent =
+                        appliesIgv
+                            ? cleanText(
+                                line.taxPercent
+                            )
+                            : '';
+
+
+                    if (
+                        appliesIgv &&
+                        !CONFIG.ITEM_PARAMETERS.TAX_PERCENT_OPTIONS.some(
+                            option => option.value === taxPercent
+                        )
+                    ) {
+
+                        throw new Error(
+                            `Selecciona el porcentaje de impuestos de la línea ${index + 1}.`
+                        );
+                    }
+
+
                     distributedSubtotal +=
                         amount;
 
 
-                    // Artículos y gastos usan el mismo tratamiento de impuestos.
+                    // Artículos: no se procesa ni se asigna ningún impuesto.
                     const taxes =
-                        buildLineTaxes(
-                            {
-                                ...line,
-                                amount
-                            },
-                            index
-                        );
+                        isItemMode
+                            ? []
+                            : buildLineTaxes(
+                                {
+                                    ...line,
+                                    amount
+                                },
+                                index
+                            );
 
 
                     return {
                         itemId,
                         categoryId,
-                        appliesIgv:
-                            isItemMode &&
-                            line.appliesIgv === true &&
-                            cleanText(invoiceData.countryCode).toUpperCase() === 'PE',
+                        taxPercent,
+                        appliesIgv,
                         amount,
                         memo:
                             cleanText(
@@ -7345,49 +7390,15 @@ define([
 
 
         /*
-         * Línea de artículo: campos propios del artículo, clasificaciones
-         * contables e impuestos del planificador (mismos campos que gastos).
-         * La cuenta contable la determina el artículo.
+         * Línea de artículo: campos propios del artículo y clasificaciones
+         * contables. La cuenta contable la determina el artículo.
+         *
+         * En el proceso de artículos NO se asigna ni se manipula ningún
+         * campo o lista de impuestos: el porcentaje elegido por el usuario
+         * solo se usa para filtrar la parametrización del artículo hijo.
          */
         const addItemLine = (distributionLine, lineIndex) => {
             try {
-
-                const lineTaxes =
-                    Array.isArray(distributionLine.taxes)
-                        ? distributionLine.taxes
-                        : [];
-
-
-                const lineMainTax =
-                    lineTaxes.find(
-                        tax =>
-                            ['TRANSFER', 'EXEMPT', 'UNAFFECTED'].includes(tax.type) &&
-                            tax.taxId
-                    );
-
-
-                const sumTaxes = types => {
-                    try {
-                        return lineTaxes
-                            .filter(tax => types.includes(tax.type))
-                            .reduce((sum, tax) => sum + toNumber(tax.amount), 0);
-                    } catch (functionError) {
-                        logFunctionError('createVendorBill.addItemLine.sumTaxes', functionError);
-                        throw functionError;
-                    }
-                };
-
-
-                const lineExpectedTotal =
-                    Number(
-                        (
-                            distributionLine.amount +
-                            sumTaxes(['TRANSFER']) -
-                            sumTaxes(['WITHHOLDING', 'DETRACTION'])
-                        ).toFixed(2)
-                    );
-
-
 
                 const childItemId =
                     distributionLine.appliesIgv
@@ -7398,7 +7409,10 @@ define([
                             currencyId:
                                 billCurrencyId,
 
-                            totalInBaseCurrency
+                            totalInBaseCurrency,
+
+                            taxPercent:
+                                distributionLine.taxPercent
                         })
                         : '';
 
@@ -7432,31 +7446,8 @@ define([
                 safeSetCurrentValue(bill, 'item', 'location', params.custpage_ubicacion);
                 safeSetCurrentValue(bill, 'item', CONFIG.FIELDS.BRAND_SEGMENT_LINE, brandSegmentId);
 
-
-                // Impuestos: mismos campos de línea que el proceso de gastos.
-                if (lineMainTax) {
-                    safeSetCurrentValue(bill, 'item', CONFIG.FIELDS.TAX_LINE, lineMainTax.taxId);
-                }
-
-                safeSetCurrentValue(bill, 'item', CONFIG.FIELDS.EXPECTED_TOTAL_LINE, lineExpectedTotal);
-
-                safeSetCurrentValue(
-                    bill,
-                    'item',
-                    'custcol_cs_tax_details_json',
-                    JSON.stringify(
-                        lineTaxes.map(
-                            tax => ({
-                                taxId: tax.taxId,
-                                type: tax.type,
-                                rate: tax.rate,
-                                amount: tax.amount,
-                                taxableAmount: tax.taxableAmount,
-                                manual: Boolean(tax.manual)
-                            })
-                        )
-                    )
-                );
+                // Total de la línea = base (en artículos no se suman impuestos).
+                safeSetCurrentValue(bill, 'item', CONFIG.FIELDS.EXPECTED_TOTAL_LINE, distributionLine.amount);
 
 
                 log.audit({
@@ -7470,15 +7461,13 @@ define([
                         appliesIgv:
                             distributionLine.appliesIgv,
 
+                        taxPercent:
+                            distributionLine.taxPercent,
+
                         billItemId,
 
                         amount:
-                            distributionLine.amount,
-
-                        lineExpectedTotal,
-
-                        taxes:
-                            lineTaxes
+                            distributionLine.amount
                     }
                 });
 
@@ -7836,11 +7825,24 @@ define([
         );
 
 
+        /*
+         * Sin sobrescritura manual del detalle de impuestos: NetSuite lo
+         * calcula. Se asigna al final para que el sourcing del encabezado
+         * y de las líneas no lo modifique.
+         */
+        safeSetValue(bill, 'taxdetailsoverride', false);
+
+        log.audit({
+            title: 'taxdetailsoverride asignado',
+            details: {
+                value: bill.getValue({ fieldId: 'taxdetailsoverride' })
+            }
+        });
+
         const billId = bill.save({
             enableSourcing: true,
             ignoreMandatoryFields: true
         });
-
         // ============================================================
         // VERIFICAR LO GUARDADO EN NETSUITE
         // ============================================================
@@ -7861,6 +7863,10 @@ define([
         const savedFiscalId = cleanText(
             created.getValue({ fieldId: countryConfig.transactionTaxIdField })
         );
+
+        created.setValue({ fieldId: "taxdetailsoverride", value: false });
+
+        created.save({ enableSourcing: true, ignoreMandatoryFields: true });
 
         log.audit({
             title: 'Vendor Bill guardada',
@@ -8137,9 +8143,11 @@ define([
      * la factura y su total convertido a Soles, porque los rangos de la
      * parametrización siempre están en Soles (límites incluidos). Si hay más
      * de una coincidencia se toma el registro con el internalid más alto.
+     * También filtra por el porcentaje de impuestos elegido en la línea
+     * (custrecord_fvr_porcentaje: 18 o 10.5).
      * Devuelve vacío si no hay parametrización que aplique.
      */
-    const findChildItemId = ({ parentItemId, currencyId, totalInBaseCurrency }) => {
+    const findChildItemId = ({ parentItemId, currencyId, totalInBaseCurrency, taxPercent }) => {
         try {
             const params = CONFIG.ITEM_PARAMETERS;
 
@@ -8147,21 +8155,26 @@ define([
                 return '';
             }
 
+            const filters = [
+                ['isinactive', 'is', 'F'],
+                'AND',
+                [params.PARENT_ITEM, 'anyof', parentItemId],
+                'AND',
+                [params.CURRENCY, 'anyof', currencyId],
+                'AND',
+                [params.CHILD_ITEM, 'noneof', '@NONE@']
+            ];
+
+            if (cleanText(taxPercent)) {
+                filters.push(
+                    'AND',
+                    [params.TAX_PERCENT, 'equalto', toNumber(taxPercent)]
+                );
+            }
+
             const results = search.create({
                 type: params.RECORD,
-                filters: [
-                    ['isinactive', 'is', 'F'],
-                    'AND',
-                    [params.PARENT_ITEM, 'anyof', parentItemId],
-                    'AND',
-                    [params.CURRENCY, 'anyof', currencyId],
-                    'AND',
-                    [params.CHILD_ITEM, 'noneof', '@NONE@'],
-                    'AND',
-                    [params.MIN_AMOUNT, 'lessthanorequalto', totalInBaseCurrency],
-                    'AND',
-                    [params.MAX_AMOUNT, 'greaterthanorequalto', totalInBaseCurrency]
-                ],
+                filters,
                 columns: [
                     search.createColumn({
                         name: 'internalid',
@@ -8177,6 +8190,7 @@ define([
                     parentItemId,
                     currencyId,
                     totalInBaseCurrency,
+                    taxPercent,
                     foundChildItemId: results.length
                         ? results[0].getValue(params.CHILD_ITEM)
                         : null
@@ -10699,7 +10713,7 @@ function syncFile(
                                         Base / importe
                                     </th>
 
-                                    <th style="width:35%;">
+                                    <th style="width:35%;" id="distributionTaxHeader">
                                         Impuestos asociados
                                     </th>
 
@@ -11021,6 +11035,10 @@ function syncFile(
                     var plannerItemOptions =
                         ${JSON.stringify(itemOptions)};
 
+                    // Porcentaje que filtra la parametrización del artículo (sin asignar impuestos).
+                    var itemTaxPercentOptions =
+                        ${JSON.stringify(CONFIG.ITEM_PARAMETERS.TAX_PERCENT_OPTIONS)};
+
                     var invoiceSubtotal =
                         ${JSON.stringify(Number(toNumber(invoice.subtotal).toFixed(2)))};
 
@@ -11340,6 +11358,11 @@ function syncFile(
 
                     function getLineTotal(line) {
 
+                        // Artículos: no se calculan impuestos, el total es la base.
+                        if (isItemMode()) {
+                            return Number(line.amount || 0);
+                        }
+
                         var transfers =
                             (line.taxes || [])
                                 .filter(function (tax) {
@@ -11405,6 +11428,40 @@ function syncFile(
                             '<option value="">Selecciona un artículo</option>'
                         ].concat(
                             (plannerItemOptions || []).map(
+                                function (option) {
+
+                                    return (
+                                        '<option value="' +
+                                        escapeClientHtml(option.value) +
+                                        '"' +
+                                        (
+                                            String(option.value) ===
+                                            String(selectedValue || '')
+                                                ? ' selected'
+                                                : ''
+                                        ) +
+                                        '>' +
+                                        escapeClientHtml(option.text) +
+                                        '</option>'
+                                    );
+                                }
+                            )
+                        ).join('');
+                    }
+
+
+                    // El porcentaje solo aplica a líneas de artículo con "Aplica IGV" marcado.
+                    function lineAppliesIgv(line) {
+                        return showIgvColumn() && Boolean(line.appliesIgv);
+                    }
+
+
+                    function taxPercentOptionsHtml(selectedValue) {
+
+                        return [
+                            '<option value="">Selecciona el porcentaje</option>'
+                        ].concat(
+                            (itemTaxPercentOptions || []).map(
                                 function (option) {
 
                                     return (
@@ -11512,13 +11569,17 @@ function syncFile(
                                 distributionLines.map(
                                     function (line) {
 
+                                        var itemMode = isItemMode();
+
                                         return {
                                             itemId: line.itemId || '',
                                             categoryId: line.categoryId || '',
                                             appliesIgv: Boolean(line.appliesIgv),
+                                            taxPercent: lineAppliesIgv(line) ? (line.taxPercent || '') : '',
                                             amount: Number(line.amount || 0) || 0,
                                             memo: line.memo || '',
-                                            taxes: (line.taxes || []).map(
+                                            // Artículos: no se envía ningún impuesto.
+                                            taxes: itemMode ? [] : (line.taxes || []).map(
                                                 function (tax) {
 
                                                     return {
@@ -11712,11 +11773,27 @@ function syncFile(
                                                 '">' +
                                             '</td>' +
 
-                                            '<td>' +
-                                                '<div class="distribution-tax-list">' +
-                                                    taxesHtml(line) +
-                                                '</div>' +
-                                            '</td>' +
+                                            (
+                                                isItemMode()
+                                                    // Artículos: solo el porcentaje que filtra la parametrización.
+                                                    // Se habilita únicamente con "Aplica IGV" marcado.
+                                                    ? '<td>' +
+                                                        '<select class="distribution-select distribution-tax-percent"' +
+                                                            (
+                                                                lineAppliesIgv(line)
+                                                                    ? ''
+                                                                    : ' disabled title="Marca Aplica IGV para elegir el porcentaje"'
+                                                            ) +
+                                                        '>' +
+                                                            taxPercentOptionsHtml(line.taxPercent) +
+                                                        '</select>' +
+                                                    '</td>'
+                                                    : '<td>' +
+                                                        '<div class="distribution-tax-list">' +
+                                                            taxesHtml(line) +
+                                                        '</div>' +
+                                                    '</td>'
+                                            ) +
 
                                             '<td class="distribution-total">' +
                                                 invoiceCurrency +
@@ -11729,12 +11806,16 @@ function syncFile(
                                             '<td>' +
                                                 '<div class="distribution-actions">' +
 
-                                                    '<button ' +
-                                                        'type="button" ' +
-                                                        'class="distribution-btn manage-line-taxes"' +
-                                                    '>' +
-                                                        'Gestionar impuestos' +
-                                                    '</button>' +
+                                                    (
+                                                        isItemMode()
+                                                            ? ''
+                                                            : '<button ' +
+                                                                'type="button" ' +
+                                                                'class="distribution-btn manage-line-taxes"' +
+                                                            '>' +
+                                                                'Gestionar impuestos' +
+                                                            '</button>'
+                                                    ) +
 
                                                     '<button ' +
                                                         'type="button" ' +
@@ -11775,9 +11856,16 @@ function syncFile(
                                 }
 
 
+                                // :not(...) para no confundirlo con el selector de porcentaje.
                                 var targetSelect =
                                     row.querySelector(
-                                        '.distribution-select'
+                                        '.distribution-select:not(.distribution-tax-percent)'
+                                    );
+
+
+                                var taxPercentSelect =
+                                    row.querySelector(
+                                        '.distribution-tax-percent'
                                     );
 
 
@@ -11830,6 +11918,21 @@ function syncFile(
                                 );
 
 
+                                if (taxPercentSelect) {
+
+                                    taxPercentSelect.addEventListener(
+                                        'change',
+                                        function () {
+
+                                            line.taxPercent =
+                                                taxPercentSelect.value;
+
+                                            syncDistributionJson();
+                                        }
+                                    );
+                                }
+
+
                                 if (igvCheck) {
 
                                     igvCheck.addEventListener(
@@ -11838,6 +11941,19 @@ function syncFile(
 
                                             line.appliesIgv =
                                                 igvCheck.checked;
+
+
+                                            // Sin IGV el porcentaje no aplica: se deshabilita y se limpia.
+                                            if (taxPercentSelect) {
+
+                                                taxPercentSelect.disabled =
+                                                    !igvCheck.checked;
+
+                                                if (!igvCheck.checked) {
+                                                    line.taxPercent = '';
+                                                    taxPercentSelect.value = '';
+                                                }
+                                            }
 
                                             syncDistributionJson();
                                         }
@@ -11899,12 +12015,15 @@ function syncFile(
                                 );
 
 
-                                manage.addEventListener(
-                                    'click',
-                                    function () {
-                                        manageLineTaxes(line);
-                                    }
-                                );
+                                // En modo artículos el botón no existe.
+                                if (manage) {
+                                    manage.addEventListener(
+                                        'click',
+                                        function () {
+                                            manageLineTaxes(line);
+                                        }
+                                    );
+                                }
 
 
                                 remove.addEventListener(
@@ -12805,6 +12924,7 @@ function syncFile(
                             itemId: '',
                             categoryId: '',
                             appliesIgv: false,
+                            taxPercent: '',
                             amount:
                                 Number(amount || 0) || 0,
                             memo: '',
@@ -12873,11 +12993,12 @@ function syncFile(
                         var labels = {
                             distributionSubtitle: itemMode
                                 ? 'Cada fila genera una línea de artículo independiente. ' +
-                                  'Los impuestos XML o manuales pertenecen únicamente al artículo de esa fila.'
+                                  'El porcentaje de impuestos solo determina el artículo a registrar; no se asignan impuestos.'
                                 : 'Cada fila genera una línea de gasto independiente. ' +
                                   'Los impuestos XML o manuales pertenecen únicamente a la categoría de esa fila.',
                             distributionModePill: itemMode ? 'Artículos' : 'Multi-categoría',
                             distributionTargetHeader: itemMode ? 'Artículo' : 'Categoría de gasto',
+                            distributionTaxHeader: itemMode ? 'Porcentaje de impuestos' : 'Impuestos asociados',
                             addExpenseDistributionLine: itemMode
                                 ? '+ Agregar artículo'
                                 : '+ Agregar categoría de gasto'
@@ -12972,6 +13093,24 @@ function syncFile(
                                         (i + 1) +
                                         ' debe ser mayor a cero.'
                                 };
+                            }
+
+
+                            // Artículos: no se validan impuestos; el porcentaje se exige solo con "Aplica IGV".
+                            if (isItemMode()) {
+
+                                if (lineAppliesIgv(line) && !line.taxPercent) {
+
+                                    return {
+                                        ok: false,
+                                        message:
+                                            'Selecciona el porcentaje de impuestos de la línea ' +
+                                            (i + 1) +
+                                            '.'
+                                    };
+                                }
+
+                                continue;
                             }
 
 
@@ -13114,7 +13253,13 @@ function syncFile(
 
                             Swal.fire({
                                 title: 'Creando factura en NetSuite',
-                                html: '<div style="line-height:1.6">Estamos creando la transacción, aplicando impuestos y vinculando los documentos fiscales.</div>',
+                                html: '<div style="line-height:1.6">' +
+                                    (
+                                        isItemMode()
+                                            ? 'Estamos creando la transacción y vinculando los documentos fiscales.'
+                                            : 'Estamos creando la transacción, aplicando impuestos y vinculando los documentos fiscales.'
+                                    ) +
+                                    '</div>',
                                 allowOutsideClick: false,
                                 allowEscapeKey: false,
                                 showConfirmButton: false,
